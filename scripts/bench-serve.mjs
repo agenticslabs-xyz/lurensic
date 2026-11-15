@@ -1,6 +1,6 @@
 // Starts the demo shop for one benchmark round. Examples
 //   pnpm bench                 (port 41837, protect mode)
-//   pnpm bench -- --port 3001 --mode observe --label "suzaku-hardened"
+//   pnpm bench -- --port 3001 --mode observe --label "artex-hardened"
 //
 // Each round gets its own folder bench-runs/<timestamp>[-label]/ with a fresh
 // deployment secret (new decoys), the Kagami event log, the full request log
@@ -54,7 +54,7 @@ const run = {
 writeFileSync(join(runDir, 'run.json'), JSON.stringify(run, null, 2) + '\n');
 
 console.log(`\nBenchmark round folder   ${relative(root, runDir)}`);
-console.log(`Suzaku target            ${run.target_from_docker}`);
+console.log(`Target for the attacker  ${run.target_from_docker}`);
 console.log(`Open in a browser        http://localhost:${values.port}\n`);
 
 const env = { ...process.env, PORT: values.port, KAGAMI_MODE: values.mode, KAGAMI_DATA_DIR: runDir };
