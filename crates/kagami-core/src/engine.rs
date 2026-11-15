@@ -30,6 +30,9 @@ pub struct Request {
     pub content_type: String,
     /// Body as text, truncated by the host.
     pub body: String,
+    /// Set by the host when its body parser rejected the body (for example
+    /// invalid JSON or an unsupported charset). `body` then holds the raw text.
+    pub body_error: String,
     /// Response status (for `response` calls).
     pub status: u16,
 }
@@ -61,6 +64,8 @@ pub enum Action {
 #[derive(Debug, Clone, Serialize)]
 pub struct Inspection {
     pub session: String,
+    /// Keyed hash of the client address, shared by all sessions from one machine.
+    pub source: String,
     pub score: u32,
     pub state: State,
     pub action: Action,
@@ -200,6 +205,12 @@ impl Engine {
         hex(&self.keys.mac("session", &[ip.as_bytes(), ua.as_bytes()])[..8])
     }
 
+    /// Keyed hash of the client address alone, shared by every session from
+    /// one machine. Honeytokens, bait files and fake records are keyed on it.
+    pub fn source_id(&self, ip: &str) -> String {
+        hex(&self.keys.mac("source", &[ip.as_bytes()])[..8])
+    }
+
     fn ignored(&self, norm_path: &str) -> bool {
         self.cfg.ignore_paths.iter().any(|p| {
             let p = normalize::norm_path(p);
@@ -240,6 +251,7 @@ impl Engine {
             let (score, state) = self.sessions.peek(&sid);
             return Inspection {
                 session: sid,
+                source: self.source_id(&req.ip),
                 score,
                 state,
                 action: Action::Pass,
@@ -250,8 +262,24 @@ impl Engine {
             };
         }
 
+        let source = self.source_id(&req.ip);
         let mut hits = Hits::default();
 
+        if let Some((header, value)) = rules::forged_forwarding(&req.headers) {
+            hits.add(
+                &rules::FORGED_FORWARDING,
+                ev(&[
+                    ("header", header.into()),
+                    ("snippet", sanitize(&value, 160).into()),
+                ]),
+            );
+        }
+        if !req.body_error.is_empty() {
+            hits.add(
+                &rules::MALFORMED_BODY,
+                ev(&[("error", sanitize(&req.body_error, 64).into())]),
+            );
+        }
         if let Some(pattern) = rules::bait_path(&path) {
             hits.add(&rules::BAIT_PATH, ev(&[("pattern", pattern.into())]));
         }
@@ -295,7 +323,7 @@ impl Engine {
                 tokens::scan(&self.keys, v, &mut found);
             }
         }
-        let my_tag = session_tag(&sid);
+        let my_tag = session_tag(&source);
         let mut linked = Vec::new();
         for f in &found {
             let cross = f.tag != my_tag;
@@ -304,8 +332,8 @@ impl Engine {
                 ev(&[
                     ("token_kind", f.kind.into()),
                     ("token", f.masked.clone().into()),
-                    ("issued_to_session", f.issued_to().into()),
-                    ("cross_session", cross.into()),
+                    ("issued_to_source", f.issued_to().into()),
+                    ("cross_source", cross.into()),
                 ]),
             );
             if cross && !linked.contains(&f.issued_to()) {
@@ -320,13 +348,14 @@ impl Engine {
 
         let ctx = self.ctx(req);
         let mut events = Vec::new();
-        let (score, state) = self.apply(&sid, now, hits.0, &ctx, &mut events);
+        let (score, state) = self.apply(&sid, &source, now, hits.0, &ctx, &mut events);
         for prefix in linked {
             self.flag_linked(&prefix, &sid, now, &ctx, &mut events);
         }
 
         let mut inspection = Inspection {
             session: sid,
+            source: source.clone(),
             score,
             state,
             action: Action::Pass,
@@ -336,7 +365,14 @@ impl Engine {
             events,
         };
         if self.cfg.mode == Mode::Protect {
-            self.protect(req, &path, decoy_route, authorised, &mut inspection);
+            self.protect(
+                req,
+                &path,
+                &source,
+                decoy_route,
+                authorised,
+                &mut inspection,
+            );
         }
         inspection
     }
@@ -346,6 +382,7 @@ impl Engine {
         &self,
         req: &Request,
         path: &str,
+        source: &str,
         decoy_route: bool,
         authorised: bool,
         i: &mut Inspection,
@@ -355,10 +392,10 @@ impl Engine {
         let reply = if decoy_route && self.cfg.decoy_routes {
             let page = respond::page_from_query(&req.query);
             Some(respond::decoy_route(
-                &self.keys, &i.session, &req.host, authorised, page,
+                &self.keys, source, &req.host, authorised, page,
             ))
         } else if get && self.cfg.bait_files {
-            respond::bait_file(&self.keys, path, &i.session, &req.host)
+            respond::bait_file(&self.keys, path, source, &req.host)
         } else {
             None
         };
@@ -382,9 +419,11 @@ impl Engine {
         i.decorate_json = self.cfg.json_decoys;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply(
         &mut self,
         sid: &str,
+        source: &str,
         now: u64,
         hits: Vec<Hit>,
         ctx: &EventCtx,
@@ -393,7 +432,7 @@ impl Engine {
         let thresholds = self.cfg.thresholds.clone();
         let mut drafts = Vec::new();
         let (score, state, prev, rule_ids) = {
-            let s = self.sessions.get_mut(sid, now);
+            let s = self.sessions.get_mut(sid, source, now);
             let prev = s.state;
             let mut instant = false;
             for h in hits {
@@ -409,6 +448,7 @@ impl Engine {
         };
         let info = SessionInfo {
             id: sid.to_string(),
+            source: source.to_string(),
             score,
             state,
         };
@@ -443,8 +483,9 @@ impl Engine {
         (score, state)
     }
 
-    /// A honeytoken came back from a different session. The session it was
-    /// issued to belongs to the same attacker, so flag it too.
+    /// A honeytoken came back from a different network than the one it was
+    /// issued to. Sessions from the issuing network that already did
+    /// something suspicious belong to the same attacker, so flag them too.
     fn flag_linked(
         &mut self,
         prefix: &str,
@@ -453,32 +494,37 @@ impl Engine {
         ctx: &EventCtx,
         out: &mut Vec<String>,
     ) {
-        let Some(id) = self.sessions.find_prefix(prefix) else {
-            return;
-        };
         let thresholds = self.cfg.thresholds.clone();
-        let (score, state, prev) = {
-            let s = self.sessions.get_mut(&id, now);
-            let prev = s.state;
-            s.record("session.linked");
-            s.add(rules::HONEYTOKEN_USED.first);
-            s.update_state(&thresholds, true);
-            (s.score, s.state, prev)
-        };
-        if prev != State::Flagged {
-            self.log.push(
-                out,
-                now,
-                Draft {
-                    rule: &rules::SESSION_FLAGGED,
-                    session: Some(SessionInfo { id, score, state }),
-                    ctx: Some(ctx.clone()),
-                    evidence: ev(&[
-                        ("previous_state", json!(prev)),
-                        ("linked_from_session", from.into()),
-                    ]),
-                },
-            );
+        for id in self.sessions.active_from_source(prefix, from) {
+            let source = self.sessions.source_of(&id).unwrap_or_default().to_string();
+            let (score, state, prev) = {
+                let s = self.sessions.get_mut(&id, &source, now);
+                let prev = s.state;
+                s.record("session.linked");
+                s.add(rules::HONEYTOKEN_USED.first);
+                s.update_state(&thresholds, true);
+                (s.score, s.state, prev)
+            };
+            if prev != State::Flagged {
+                self.log.push(
+                    out,
+                    now,
+                    Draft {
+                        rule: &rules::SESSION_FLAGGED,
+                        session: Some(SessionInfo {
+                            id,
+                            source,
+                            score,
+                            state,
+                        }),
+                        ctx: Some(ctx.clone()),
+                        evidence: ev(&[
+                            ("previous_state", json!(prev)),
+                            ("linked_from_session", from.into()),
+                        ]),
+                    },
+                );
+            }
         }
     }
 
@@ -495,6 +541,7 @@ impl Engine {
                 events: Vec::new(),
             };
         }
+        let source = self.source_id(&req.ip);
         let window = self.cfg.behavior_window_secs * 1000;
         let (enum_t, auth_t) = (
             self.cfg.enumeration_threshold as usize,
@@ -502,7 +549,7 @@ impl Engine {
         );
         let mut hits = Hits::default();
         {
-            let s = self.sessions.get_mut(&sid, now);
+            let s = self.sessions.get_mut(&sid, &source, now);
             let queue = match req.status {
                 404 => Some((&mut s.not_found, enum_t, &rules::BEHAVIOR_ENUM)),
                 401 | 403 => Some((&mut s.auth_fail, auth_t, &rules::BEHAVIOR_AUTH)),
@@ -528,7 +575,7 @@ impl Engine {
             self.sessions.peek(&sid)
         } else {
             let ctx = self.ctx(req);
-            self.apply(&sid, now, hits.0, &ctx, &mut events)
+            self.apply(&sid, &source, now, hits.0, &ctx, &mut events)
         };
         ResponseOutcome {
             score,
@@ -542,8 +589,9 @@ impl Engine {
         if self.cfg.mode != Mode::Protect || !self.cfg.html_decoys {
             return None;
         }
-        let comment = self.decoys.html_comment(&self.keys, session)?;
-        let variant = self.keys.u32("decoy/placement", &[session.as_bytes()]);
+        let source = self.sessions.source_of(session).unwrap_or(session);
+        let comment = self.decoys.html_comment(&self.keys, source)?;
+        let variant = self.keys.u32("decoy/placement", &[]);
         decoys::decorate_html(html, &comment, variant)
     }
 
@@ -569,6 +617,7 @@ impl Engine {
             };
         }
         let sid = self.session_id(&req.ip, req.user_agent());
+        let source = self.source_id(&req.ip);
         let ctx = self.ctx(req);
         let hit = Hit {
             rule: &rules::TAMPER_SEALED,
@@ -578,7 +627,7 @@ impl Engine {
             ]),
         };
         let mut events = Vec::new();
-        self.apply(&sid, req.now_ms, vec![hit], &ctx, &mut events);
+        self.apply(&sid, &source, req.now_ms, vec![hit], &ctx, &mut events);
         VerifyOutcome {
             valid: false,
             value: None,

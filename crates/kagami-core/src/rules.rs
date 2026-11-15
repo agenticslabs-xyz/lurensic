@@ -311,6 +311,30 @@ rule!(
     false,
     ["T1110"]
 );
+rule!(
+    FORGED_FORWARDING,
+    "client.forged_forwarding",
+    "Forged client address header",
+    "detection",
+    Medium,
+    High,
+    35,
+    5,
+    false,
+    []
+);
+rule!(
+    MALFORMED_BODY,
+    "request.malformed_body",
+    "Malformed or mis-encoded request body",
+    "detection",
+    Low,
+    Medium,
+    20,
+    5,
+    false,
+    []
+);
 
 // Lifecycle
 rule!(
@@ -544,7 +568,8 @@ const SSRF: &[&str] = &[
     "169.254.170.2",
 ];
 const XXE: &[&str] = &["<!entity", "xi:include", "system \"file:", "system 'file:"];
-const JNDI: &[&str] = &["${jndi:", "${${", "${lower:", "${env:", "${sys:"];
+// "{jndi:" also covers nested forms such as "${{jndi:" seen in live traffic.
+const JNDI: &[&str] = &["{jndi:", "${${", "${lower:", "${env:", "${sys:"];
 const OAST: &[&str] = &[
     "oast.fun",
     "oast.pro",
@@ -783,6 +808,80 @@ const AI_AGENTS: &[&str] = &[
     "mistralai-user",
     "duckassistbot",
 ];
+
+/// Headers that proxies use to pass on the original client address.
+const FORWARDING_HEADERS: &[&str] = &[
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-client-ip",
+    "true-client-ip",
+    "cf-connecting-ip",
+    "x-originating-ip",
+    "x-remote-ip",
+    "x-remote-addr",
+    "x-cluster-client-ip",
+    "client-ip",
+    "fastly-client-ip",
+];
+
+/// An address as proxies write it, with an optional port. `unknown` is what
+/// some proxies write when they don't know the address.
+fn valid_address(s: &str) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let s = s.trim().trim_matches('"');
+    if s.eq_ignore_ascii_case("unknown") || s.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    if let Some(rest) = s.strip_prefix('[') {
+        return match rest.split_once(']') {
+            Some((ip, tail)) => {
+                ip.parse::<Ipv6Addr>().is_ok()
+                    && (tail.is_empty()
+                        || tail
+                            .strip_prefix(':')
+                            .is_some_and(|p| p.parse::<u16>().is_ok()))
+            }
+            None => false,
+        };
+    }
+    match s.rsplit_once(':') {
+        Some((ip, port)) => ip.parse::<Ipv4Addr>().is_ok() && port.parse::<u16>().is_ok(),
+        None => false,
+    }
+}
+
+/// Finds a client address header holding something no proxy would write,
+/// such as markup, hostnames, CIDR ranges or injected line breaks. Agents
+/// forge these headers to bypass IP checks or to split their traffic into
+/// many apparent clients. Private and loopback addresses are not flagged,
+/// because real proxy chains contain them.
+pub fn forged_forwarding(headers: &[(String, String)]) -> Option<(String, String)> {
+    for (name, value) in headers {
+        let lname = name.to_ascii_lowercase();
+        if value.trim().is_empty() {
+            continue;
+        }
+        let forged = if FORWARDING_HEADERS.contains(&lname.as_str()) {
+            value.split(',').any(|part| !valid_address(part))
+        } else if lname == "forwarded" {
+            value
+                .split([',', ';'])
+                .filter_map(|el| {
+                    let el = el.trim();
+                    el.get(..4)
+                        .filter(|p| p.eq_ignore_ascii_case("for="))
+                        .map(|_| el[4..].trim_matches('"'))
+                })
+                .any(|v| !v.starts_with('_') && !valid_address(v))
+        } else {
+            false
+        };
+        if forged {
+            return Some((lname, value.clone()));
+        }
+    }
+    None
+}
 
 pub fn classify_ua(ua: &str) -> Vec<(&'static RuleDef, &'static str)> {
     let l = ua.to_ascii_lowercase();

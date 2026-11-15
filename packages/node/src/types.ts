@@ -62,6 +62,8 @@ export interface HttpRequest {
   body?: string;
   /** Content type of `body` when it differs from the header (e.g. re-serialised JSON). */
   contentType?: string;
+  /** Set when the body parser rejected the body, for example invalid JSON or an unsupported charset. Pass the raw text as `body`. */
+  bodyError?: string;
 }
 
 export type CoreAction =
@@ -70,6 +72,8 @@ export type CoreAction =
 
 export interface Verdict {
   session: string;
+  /** Keyed hash of the client address. All sessions from one machine share it. */
+  source: string;
   score: number;
   state: SessionState;
   action: CoreAction;

@@ -11,7 +11,7 @@ import { Core, KagamiCoreError } from './core.js';
 import { consoleSink, Pipeline } from './sinks.js';
 import type { HttpRequest, KagamiOptions, KagamiStats, Mode, Verdict } from './types.js';
 
-const PASS: Omit<Verdict, 'session'> = {
+const PASS: Omit<Verdict, 'session' | 'source'> = {
   score: 0,
   state: 'clean',
   action: { type: 'pass' },
@@ -22,6 +22,7 @@ const PASS: Omit<Verdict, 'session'> = {
 
 interface CoreInspection {
   session: string;
+  source: string;
   score: number;
   state: Verdict['state'];
   action: Verdict['action'];
@@ -171,6 +172,7 @@ export class Kagami {
       query: req.query,
       headers: req.headers,
       content_type: req.contentType ?? '',
+      body_error: req.bodyError ?? '',
       body,
       ...extra,
     };
@@ -179,12 +181,13 @@ export class Kagami {
   /** Inspect a request. Never throws; on any problem returns a pass verdict. */
   inspect(req: HttpRequest): Verdict {
     const core = this.live();
-    if (!core) return { session: '', ...PASS };
+    if (!core) return { session: '', source: '', ...PASS };
     try {
       const r = core.call<CoreInspection>('inspect', this.wire(req));
       if (r.events.length) this.pipeline.push(r.events);
       return {
         session: r.session,
+        source: r.source,
         score: r.score,
         state: r.state,
         action: r.action,
@@ -194,7 +197,7 @@ export class Kagami {
       };
     } catch (err) {
       this.fault(err);
-      return { session: '', ...PASS };
+      return { session: '', source: '', ...PASS };
     }
   }
 

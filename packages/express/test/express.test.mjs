@@ -151,3 +151,42 @@ test('brute force and enumeration are detected from response codes', async () =>
     await app.close();
   }
 });
+
+// Regression tests from the first live benchmark round (2026-11-15).
+
+test('requests rejected by the body parser are still inspected', async () => {
+  const mem = memorySink();
+  const plain = await listen(buildApp());
+  const guarded = await listen(buildApp(kagami({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet })));
+  const broken = [
+    { headers: { 'content-type': 'application/json' }, body: '{"email":"x\' OR 1=1--","password":' },
+    { headers: { 'content-type': 'application/json; charset=latin1' }, body: '{"email":"a@b.c"}' },
+  ];
+  try {
+    for (const init of broken) {
+      const a = await fetch(plain.base + '/login', { method: 'POST', ...init });
+      const b = await fetch(guarded.base + '/login', { method: 'POST', ...init });
+      assert.equal(b.status, a.status, 'observe mode leaves the app error response alone');
+    }
+  } finally {
+    await plain.close();
+    await guarded.close();
+  }
+  await settle();
+  const rules = mem.events.map((e) => e.rule);
+  assert.ok(rules.includes('request.malformed_body'), String(rules));
+  assert.ok(rules.includes('payload.sqli'), `payloads inside a broken body are still found, saw ${rules}`);
+});
+
+test('protect mode answers decoy routes even when the body is malformed', async () => {
+  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
+  const app = await listen(buildApp(mw));
+  try {
+    const route = mw.kagami.manifest().decoys.routes[0];
+    const res = await fetchRaw(app.base, route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"a":' });
+    assert.equal(res.status, 401);
+    assert.match(res.body, /unauthorized/);
+  } finally {
+    await app.close();
+  }
+});

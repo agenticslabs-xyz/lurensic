@@ -57,7 +57,8 @@ console.log(`\nBenchmark round folder   ${relative(root, runDir)}`);
 console.log(`Target for the attacker  ${run.target_from_docker}`);
 console.log(`Open in a browser        http://localhost:${values.port}\n`);
 
-const env = { ...process.env, PORT: values.port, KAGAMI_MODE: values.mode, KAGAMI_DATA_DIR: runDir };
+// Production mode, like a real deployment. Express then hides error details.
+const env = { ...process.env, NODE_ENV: 'production', PORT: values.port, KAGAMI_MODE: values.mode, KAGAMI_DATA_DIR: runDir };
 delete env.KAGAMI_SECRET; // a fresh secret per round, stored in the run folder
 const child = spawn(process.execPath, [join(root, 'examples', 'demo-shop', 'server.js')], { env, stdio: 'inherit' });
 

@@ -66,6 +66,9 @@ npx @agenticslabs/kagami secret          # put the output in KAGAMI_SECRET
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(kagami());                   // after body parsers, before your routes
+
+// kagami() returns the middleware and an error handler as a pair, so requests
+// that a body parser rejects (broken JSON, odd charsets) are still inspected.
 ```
 
 Watch the events, which go to stdout as JSON lines by default. Then switch on deception.
@@ -106,14 +109,14 @@ Set `KAGAMI_DISABLED=1` to switch Kagami off.
   "rule": "honeytoken.used",
   "title": "Honeytoken used",
   "severity": "critical",
-  "session": { "id": "c2c7a1f09e4b5d36", "score": 135, "state": "flagged" },
+  "session": { "id": "c2c7a1f09e4b5d36", "source": "51d0e3a7b2c94f18", "score": 135, "state": "flagged" },
   "source": { "ip": "192.0.2.77", "user_agent": "python-httpx/0.27" },
   "request": { "method": "POST", "host": "shop.example.com", "path": "/login", "query": "" },
   "evidence": {
     "token_kind": "env_admin_password",
     "token": "aB3c…xYz9",
-    "issued_to_session": "9f2e40aa",
-    "cross_session": true
+    "issued_to_source": "9f2e40aa",
+    "cross_source": true
   },
   "mitre_attack": ["T1552.001", "T1078"],
   "untrusted": ["source.user_agent", "request.host", "request.path", "request.query", "evidence"],
@@ -122,8 +125,9 @@ Set `KAGAMI_DISABLED=1` to switch Kagami off.
 }
 ```
 
-This event means the password used to log in came from the fake `.env` served to session
-`9f2e40aa`, which is now on a different IP and user agent. It is the same attacker.
+This event means the password used to log in came from the fake `.env` that Kagami served to the
+machine with source `9f2e40aa`. The login came from a different address, and it is the same attacker.
+Sessions from that machine that had already probed the site are flagged and linked as well.
 
 Check that a log hasn't been tampered with.
 

@@ -27,6 +27,12 @@ function loadSecret() {
   return readFileSync(file, 'utf8').trim();
 }
 
+function parseTrustProxy(value) {
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  return /^d+$/.test(value) ? Number(value) : value;
+}
+
 const eventsPath = join(dataDir, 'kagami-events.jsonl');
 const accessPath = join(dataDir, 'access.jsonl');
 
@@ -37,6 +43,9 @@ const app = createApp(
     sinks: [consoleSink({ minSeverity: 'medium' }), fileSink({ path: eventsPath })],
   },
   {
+    // The demo runs without a proxy in front of it, so client address
+    // headers are never trusted. Set TRUST_PROXY when a real proxy is added.
+    trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
     // Full request log for benchmark analysis. It holds no bodies, cookies or header values except the user agent.
     accessLog: (record) => appendFile(accessPath, JSON.stringify(record) + '\n', { mode: 0o600 }, () => {}),
   },

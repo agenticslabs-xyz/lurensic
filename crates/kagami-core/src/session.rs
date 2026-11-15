@@ -17,6 +17,9 @@ pub enum State {
 pub const SCORE_CAP: u32 = 10_000;
 
 pub struct Session {
+    /// Keyed hash of the client address alone. Honeytokens are issued per
+    /// source, so they can be traced back to the network that received them.
+    pub source: String,
     pub score: u32,
     pub state: State,
     pub last_seen: u64,
@@ -28,6 +31,7 @@ pub struct Session {
 impl Session {
     fn new(now: u64) -> Self {
         Session {
+            source: String::new(),
             score: 0,
             state: State::Clean,
             last_seen: now,
@@ -83,7 +87,7 @@ impl Store {
         }
     }
 
-    pub fn get_mut(&mut self, id: &str, now: u64) -> &mut Session {
+    pub fn get_mut(&mut self, id: &str, source: &str, now: u64) -> &mut Session {
         let expired = self
             .map
             .get(id)
@@ -99,6 +103,9 @@ impl Store {
         }
         let s = self.map.get_mut(id).expect("inserted above");
         s.last_seen = s.last_seen.max(now);
+        if s.source.is_empty() {
+            s.source = source.to_string();
+        }
         s
     }
 
@@ -109,9 +116,22 @@ impl Store {
             .unwrap_or((0, State::Clean))
     }
 
-    /// Find a live session whose id starts with the given hex prefix.
-    pub fn find_prefix(&self, prefix: &str) -> Option<String> {
-        self.map.keys().find(|k| k.starts_with(prefix)).cloned()
+    pub fn source_of(&self, id: &str) -> Option<&str> {
+        self.map.get(id).map(|s| s.source.as_str())
+    }
+
+    /// Live sessions from a source (matched by hex prefix) that have already
+    /// done something suspicious. Clean sessions are left alone, so other
+    /// people behind the same address are not flagged.
+    pub fn active_from_source(&self, prefix: &str, except: &str) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .map
+            .iter()
+            .filter(|(id, s)| *id != except && s.source.starts_with(prefix) && s.score > 0)
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
     }
 
     fn evict(&mut self, now: u64) {
@@ -146,9 +166,9 @@ mod tests {
     #[test]
     fn eviction_prefers_clean_sessions() {
         let mut st = Store::new(100, 3600);
-        st.get_mut("attacker", 0).state = State::Flagged;
+        st.get_mut("attacker", "src", 0).state = State::Flagged;
         for i in 0..200u64 {
-            st.get_mut(&format!("s{i}"), i + 1);
+            st.get_mut(&format!("s{i}"), "src", i + 1);
         }
         assert!(st.len() <= 100);
         assert_eq!(st.peek("attacker").1, State::Flagged);

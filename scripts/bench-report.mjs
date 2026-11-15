@@ -56,11 +56,21 @@ const cell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' 
 
 const sessions = new Map();
 const session = (id) => {
-  if (!sessions.has(id)) sessions.set(id, { id, requests: [], events: [] });
+  if (!sessions.has(id)) sessions.set(id, { id, source: '', requests: [], events: [] });
   return sessions.get(id);
 };
-for (const a of access) if (a.kagami?.session) session(a.kagami.session).requests.push(a);
-for (const e of events) if (e.session?.id) session(e.session.id).events.push(e);
+for (const a of access) {
+  if (!a.kagami?.session) continue;
+  const s = session(a.kagami.session);
+  s.requests.push(a);
+  s.source ||= a.kagami.source ?? '';
+}
+for (const e of events) {
+  if (!e.session?.id) continue;
+  const s = session(e.session.id);
+  s.events.push(e);
+  s.source ||= e.session.source ?? '';
+}
 
 // Access records are written when a response finishes. Subtracting the
 // recorded duration gives the moment the request arrived, which is when
@@ -69,7 +79,9 @@ const arrived = (a) => ms(a.ts) - (a.ms ?? 0);
 
 function note(e) {
   const ev = e.evidence ?? {};
-  if (e.rule === 'honeytoken.used') return `${ev.token_kind} issued to session ${ev.issued_to_session}`;
+  if (e.rule === 'honeytoken.used') return `${ev.token_kind} issued to source ${ev.issued_to_source ?? ev.issued_to_session}`;
+  if (e.rule === 'client.forged_forwarding') return `${ev.header} set to ${ev.snippet}`;
+  if (e.rule === 'request.malformed_body') return `parser error ${ev.error}`;
   if (e.rule === 'session.flagged' && ev.linked_from_session) return `linked by a honeytoken used in session ${String(ev.linked_from_session).slice(0, 8)}`;
   if (e.rule === 'session.flagged') return `score ${e.session?.score}`;
   if (ev.param) return `parameter ${ev.param} in ${ev.location}`;
@@ -92,9 +104,12 @@ for (const s of sessions.values()) {
   const firstDetection = detections[0];
   const firstTripwire = detections.find((e) => TRIPWIRES.has(e.rule));
   const before = (t) => Math.max(1, s.requests.filter((r) => arrived(r) <= t + 1).length);
+  const ip = first?.ip ?? s.events[0]?.source?.ip ?? '';
   rows.push({
     id: s.id,
-    ip: first?.ip ?? s.events[0]?.source?.ip ?? '',
+    // Rounds recorded before sources existed fall back to the address.
+    source: s.source || `address ${ip}`,
+    ip,
     client: first?.ua ?? s.events[0]?.source?.user_agent ?? '',
     requests: s.requests.length,
     detected: detections.length > 0,
@@ -113,6 +128,20 @@ for (const s of sessions.values()) {
 }
 const detected = rows.filter((r) => r.detected || r.flagged).sort((a, b) => a.firstSeen - b.firstSeen);
 const quiet = rows.filter((r) => !r.detected && !r.flagged);
+
+// One source is one machine. An agent that switches tools or user agents
+// shows up as several sessions but a single source.
+const sources = new Map();
+for (const r of rows) {
+  const g = sources.get(r.source) ?? { source: r.source, ip: r.ip, sessions: 0, requests: 0, detected: 0, flagged: 0, firstDetection: Infinity };
+  g.sessions++;
+  g.requests += r.requests;
+  if (r.detected) g.detected++;
+  if (r.flagged) g.flagged++;
+  if (r.firstDetection) g.firstDetection = Math.min(g.firstDetection, r.firstSeen + r.firstDetection.after);
+  sources.set(r.source, g);
+}
+const sourceRows = [...sources.values()].sort((a, b) => b.requests - a.requests);
 
 const ruleCounts = new Map();
 for (const e of events.filter((e) => e.kind === 'detection')) {
@@ -136,10 +165,13 @@ const summary = {
   sessions_detected: detected.length,
   sessions_flagged: rows.filter((r) => r.flagged).length,
   sessions_quiet: quiet.length,
+  sources: sourceRows.length,
+  sources_flagged: sourceRows.filter((g) => g.flagged > 0).length,
   honeytokens_used: honeytokens.length,
   decoy_route_requests: decoyHits,
   fastest_tripwire_ms: Math.min(...detected.filter((r) => r.firstTripwire).map((r) => r.firstTripwire.after)),
   fastest_flag_ms: Math.min(...detected.filter((r) => r.flaggedAt).map((r) => r.flaggedAt.after)),
+  sources_detail: sourceRows.map((g) => ({ ...g, firstDetection: Number.isFinite(g.firstDetection) ? g.firstDetection - start : null })),
   sessions_detail: detected.map(({ timeline, firstSeen, ...r }) => r),
 };
 
@@ -158,6 +190,8 @@ md.push(
 
 md.push('## Result', '', '| Measure | Value |', '|---|---|');
 md.push(`| Requests served | ${access.length} |`);
+md.push(`| Sources seen (one per machine) | ${sourceRows.length} |`);
+md.push(`| Sources with a flagged session | ${summary.sources_flagged} |`);
 md.push(`| Sessions seen | ${rows.length} |`);
 md.push(`| Sessions with detections | ${detected.length} |`);
 md.push(`| Sessions flagged as attackers | ${summary.sessions_flagged} |`);
@@ -167,6 +201,18 @@ md.push(`| Requests to decoy routes | ${decoyHits} |`);
 md.push(`| Fastest first tripwire | ${Number.isFinite(summary.fastest_tripwire_ms) ? duration(summary.fastest_tripwire_ms) : 'none'} |`);
 md.push(`| Fastest flag | ${Number.isFinite(summary.fastest_flag_ms) ? duration(summary.fastest_flag_ms) : 'none'} |`);
 md.push('');
+
+if (sourceRows.length) {
+  md.push('## Sources', '');
+  md.push('A source is one machine. Different tools or user agents on that machine are separate sessions of the same source.', '');
+  md.push('| Source | Address | Sessions | Requests | Sessions with detections | Sessions flagged | First detection |', '|---|---|---|---|---|---|---|');
+  for (const g of sourceRows.slice(0, 25)) {
+    const first = Number.isFinite(g.firstDetection) ? `${duration(g.firstDetection - start)} into the round` : 'none';
+    md.push(`| \`${cell(g.source).slice(0, 24)}\` | ${cell(g.ip)} | ${g.sessions} | ${g.requests} | ${g.detected} | ${g.flagged} | ${first} |`);
+  }
+  if (sourceRows.length > 25) md.push('', `${sourceRows.length - 25} more sources are listed in report.json.`);
+  md.push('');
+}
 
 if (detected.length) {
   md.push('## Sessions with detections', '');

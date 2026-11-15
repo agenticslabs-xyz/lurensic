@@ -110,7 +110,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
             ua: (req.get('user-agent') ?? '').slice(0, 512),
             header_order: names,
             http_version: req.httpVersion,
-            kagami: req.kagami ? { session: req.kagami.session, state: req.kagami.state, score: req.kagami.score } : null,
+            kagami: req.kagami ? { session: req.kagami.session, source: req.kagami.source, state: req.kagami.state, score: req.kagami.score } : null,
           }, req);
         } catch {
           /* research logging must never affect the app */
@@ -183,8 +183,11 @@ export function createApp(kagamiOptions = {}, demo = {}) {
   });
 
   app.post('/login', (req, res) => {
-    const email = String(req.body?.email ?? '');
-    const password = String(req.body?.password ?? '');
+    const email = req.body?.email;
+    const password = req.body?.password;
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      return res.status(400).send(page('Sign in', '<h1>Sign in</h1><p>Enter an email address and a password.</p>', undefined));
+    }
     const user = USERS.get(email);
     if (!user || user.password !== password) {
       return res.status(401).send(page('Sign in', '<h1>Sign in</h1><p>Invalid email or password.</p>', undefined));
@@ -235,6 +238,20 @@ export function createApp(kagamiOptions = {}, demo = {}) {
   });
 
   app.use((req, res) => res.status(404).send(page('Not found', '<h1>Not found</h1>', currentUser(req))));
+
+  // Production error handler. Never send stack traces, file paths or
+  // package names, which would tell an attacker what the site runs on.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, _next) => {
+    const status = Number(err?.status ?? err?.statusCode);
+    const code = status >= 400 && status < 500 ? status : 500;
+    if (res.headersSent) return;
+    if (req.path.startsWith('/api/')) {
+      res.status(code).json({ error: code === 500 ? 'server error' : 'bad request' });
+    } else {
+      res.status(code).send(page('Error', code === 500 ? '<h1>Something went wrong</h1>' : '<h1>Bad request</h1>', undefined));
+    }
+  });
 
   return Object.assign(app, { kagami: guard.kagami });
 }

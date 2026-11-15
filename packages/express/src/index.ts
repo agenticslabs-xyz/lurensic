@@ -9,14 +9,16 @@
  * routes. Every code path fails open. If anything inside Kagami goes wrong,
  * the request continues to your app untouched.
  */
-import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { ErrorRequestHandler, Request, RequestHandler, Response } from 'express';
 import { Kagami, type HttpRequest, type KagamiOptions, type Verdict } from '@agenticslabs/kagami';
 
 export * from '@agenticslabs/kagami';
 
 export interface KagamiRequestContext {
-  /** Opaque session id (keyed hash of IP + user agent). */
+  /** Opaque session id (keyed hash of IP and user agent). */
   readonly session: string;
+  /** Keyed hash of the client address. All sessions from one machine share it. */
+  readonly source: string;
   readonly state: Verdict['state'];
   readonly score: number;
   /** Seal a value you hand to the client (ID, price, role). */
@@ -105,10 +107,59 @@ function wrapSend(res: Response, k: Kagami, verdict: Verdict): void {
   } as Response['send'];
 }
 
-export function kagami(options: KagamiExpressOptions = {}): RequestHandler & { kagami: Kagami } {
+export type KagamiMiddleware = [RequestHandler, ErrorRequestHandler] & { kagami: Kagami };
+
+/** Body parser failures carry a `type` such as `entity.parse.failed` or `charset.unsupported`. */
+function bodyError(err: unknown): { type: string; body: string } | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as { type?: unknown; body?: unknown; status?: unknown };
+  const type = typeof e.type === 'string' ? e.type : '';
+  if (!/^(entity.|encoding.|charset.|request.)/.test(type)) return null;
+  return { type, body: typeof e.body === 'string' ? e.body : '' };
+}
+
+/**
+ * Returns the middleware and an error handler as a pair, which `app.use`
+ * accepts as one argument. The error handler covers requests that a body
+ * parser rejected before the middleware ran, so malformed bodies are still
+ * inspected. Attackers send them on purpose.
+ */
+export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
   const k = options.instance ?? new Kagami(options);
 
-  const middleware = (req: Request, res: Response, next: NextFunction): void => {
+  /** Attach the verdict to the request and apply its action. Returns true if Kagami answered. */
+  const apply = (req: Request, res: Response, info: HttpRequest, verdict: Verdict, decorate: boolean): boolean => {
+    req.kagami = {
+      session: verdict.session,
+      source: verdict.source,
+      state: verdict.state,
+      score: verdict.score,
+      seal: (value) => k.seal(value),
+      verify: (sealed, name) => k.verify(info, sealed, name),
+    };
+    res.once('finish', () => k.response(info, res.statusCode));
+    const action = verdict.action;
+    if (action.type === 'respond') {
+      try {
+        res.status(action.status);
+        for (const [name, value] of action.headers) res.setHeader(name, value);
+        res.send(action.body);
+        return true;
+      } catch {
+        if (res.headersSent) return true;
+      }
+    }
+    if (decorate && (verdict.decorateHtml || verdict.decorateJson)) {
+      try {
+        wrapSend(res, k, verdict);
+      } catch {
+        /* fail open */
+      }
+    }
+    return false;
+  };
+
+  const middleware: RequestHandler = (req, res, next) => {
     let info: HttpRequest;
     let verdict: Verdict;
     try {
@@ -118,44 +169,41 @@ export function kagami(options: KagamiExpressOptions = {}): RequestHandler & { k
       next();
       return;
     }
-
-    req.kagami = {
-      session: verdict.session,
-      state: verdict.state,
-      score: verdict.score,
-      seal: (value) => k.seal(value),
-      verify: (sealed, name) => k.verify(info, sealed, name),
-    };
-
-    res.once('finish', () => k.response(info, res.statusCode));
-
     const proceed = (): void => {
-      const action = verdict.action;
-      if (action.type === 'respond') {
-        try {
-          res.status(action.status);
-          for (const [name, value] of action.headers) res.setHeader(name, value);
-          res.send(action.body);
-          return;
-        } catch {
-          if (res.headersSent) return;
-        }
-      }
-      if (verdict.decorateHtml || verdict.decorateJson) {
-        try {
-          wrapSend(res, k, verdict);
-        } catch {
-          /* fail open */
-        }
-      }
-      next();
+      if (!apply(req, res, info, verdict, true)) next();
     };
-
     if (verdict.delayMs > 0) setTimeout(proceed, verdict.delayMs);
     else proceed();
   };
 
-  return Object.assign(middleware, { kagami: k });
+  const errors: ErrorRequestHandler = (err, req, res, next) => {
+    const parsed = bodyError(err);
+    if (req.kagami || !parsed || res.headersSent) {
+      next(err);
+      return;
+    }
+    let info: HttpRequest;
+    let verdict: Verdict;
+    try {
+      info = {
+        ...toHttpRequest(req, k.maxBodyBytes, options.clientIp),
+        body: parsed.body.slice(0, k.maxBodyBytes),
+        contentType: 'text/plain',
+        bodyError: parsed.type,
+      };
+      verdict = k.inspect(info);
+    } catch {
+      next(err);
+      return;
+    }
+    const proceed = (): void => {
+      if (!apply(req, res, info, verdict, false)) next(err);
+    };
+    if (verdict.delayMs > 0) setTimeout(proceed, verdict.delayMs);
+    else proceed();
+  };
+
+  return Object.assign([middleware, errors] as [RequestHandler, ErrorRequestHandler], { kagami: k });
 }
 
 export default kagami;

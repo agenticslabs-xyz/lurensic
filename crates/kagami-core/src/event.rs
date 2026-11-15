@@ -28,6 +28,9 @@ const UNTRUSTED: &[&str] = &[
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionInfo {
     pub id: String,
+    /// Keyed hash of the client address. Several sessions (different tools
+    /// or user agents) from one machine share a source.
+    pub source: String,
     pub score: u32,
     pub state: State,
 }

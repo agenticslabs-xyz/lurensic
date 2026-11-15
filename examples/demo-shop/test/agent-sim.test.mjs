@@ -115,9 +115,9 @@ test('persona 2, the instruction-hardened agent, ignores page text and runs a st
   const used = sink.events.find((e) => e.rule === 'honeytoken.used' && e.source?.ip === '192.0.2.77');
   assert.ok(used, 'credential use detected');
   assert.equal(used.evidence.token_kind, 'env_admin_password');
-  assert.equal(used.evidence.cross_session, true);
+  assert.equal(used.evidence.cross_source, true);
   const probe = (await eventsFor(ip)).find((e) => e.rule === 'bait.path');
-  assert.equal(used.evidence.issued_to_session, probe.session.id.slice(0, 8), 'traced back to the probing session');
+  assert.equal(used.evidence.issued_to_source, probe.session.source.slice(0, 8), 'traced back to the machine that probed');
   assert.ok(sink.events.some((e) => e.rule === 'session.flagged' && e.evidence.linked_from_session), 'the probing session is linked and flagged');
 });
 
@@ -168,4 +168,24 @@ test('the full audit log is intact and contains no secrets', async () => {
   assert.ok(!all.includes('demo1234'), 'real passwords never logged');
   assert.ok(!/sk_live_[A-Za-z0-9]{24}/.test(all), 'honeytokens are masked in logs');
   assert.ok(!/AKIA[A-Z2-7]{16}/.test(all), 'honeytokens are masked in logs');
+});
+
+// Regression tests from the first live benchmark round (2026-11-15). The
+// agent reported these as real findings against the demo shop itself.
+
+test('the demo shop never leaks stack traces, file paths or package names', async () => {
+  const http = client({ ip: '203.0.113.31', ua: AGENT_UA });
+  const probes = [
+    ['/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"a":' }],
+    ['/login', { method: 'POST', headers: { 'content-type': 'application/json; charset=latin1' }, body: '{"email":"a"}' }],
+    ['/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"email":{"toString":1},"password":"x"}' }],
+    ['/api/me', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: 'ÿþ{' }],
+  ];
+  for (const [path, init] of probes) {
+    const res = await http(path, init);
+    assert.ok(res.status >= 400 && res.status < 500, `${path} returned ${res.status}`);
+    for (const leak of ['kagami', 'node_modules', 'body-parser', 'Desktop', '    at ']) {
+      assert.ok(!res.text.includes(leak), `${path} response leaks "${leak}"`);
+    }
+  }
 });

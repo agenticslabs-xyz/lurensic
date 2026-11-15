@@ -124,8 +124,10 @@ visible prefix, and an agent could notice that the secrets were generated togeth
 shared structure, and the server can still unmask and verify them. Verification is stateless (there is no token
 database), so a token keeps working as a tripwire across restarts and across instances that share a secret. Tokens
 from other deployments never verify. Lengths are multiples of 5 bytes, so the encoding never contains padding
-characters that could fingerprint it. When a token arrives from a different session than the one it was issued to,
-both sessions are flagged and linked (`cross_session: true`).
+characters that could fingerprint it. Tokens are issued per **source**, a keyed hash of the client address alone, so every
+tool and user agent on one machine receives the same token. When a token arrives from a different source than the
+one it was issued to (`cross_source: true`), the session that used it is flagged, and so is every session from the
+issuing source that had already done something suspicious. Clean sessions from that address are left alone.
 
 **Sealed values** (`seal` and `verify`). A sealed value has the form `value~base32ₘ(HMAC(secret, "seal", value)[:10])`.
 Changing or stripping the seal is reported as `tamper.sealed_value`. Knowing the scheme does not help without the secret.
@@ -163,8 +165,16 @@ byte-set prefilter lets ordinary values skip nearly the whole pattern table.
 | `payload.sqli`, `nosqli`, `xss`, `ssti`, `traversal`, `ssrf`, `xxe`, `crlf` | medium | 35 and 5 | T1190 |
 | `bait.path` | medium | 30 and 5 | T1595.003, T1552.001 |
 | `behavior.auth_failures` | medium | 30 and 10 | T1110 |
+| `client.forged_forwarding` | medium | 35 and 5 | |
+| `request.malformed_body` | low | 20 and 5 | |
 | `client.automation`, `client.ai_agent` | info | 5 and 0, 0 and 0 | |
 | `session.flagged` | high | state transition | |
+
+`client.forged_forwarding` fires when a client address header such as `X-Forwarded-For` holds something no proxy
+writes, such as markup, a hostname, a CIDR range or an encoded line break. Private and loopback addresses do not fire
+it, because real proxy chains contain them. `request.malformed_body` fires when the host's body parser rejects the
+body. The Express adapter still inspects such requests, using the raw text from the parser error, so payloads inside
+a broken body are found as well.
 
 Info level rules add to the score but never produce a standalone event. They appear in the `session.flagged` summary.
 

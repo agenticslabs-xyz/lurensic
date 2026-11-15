@@ -175,8 +175,10 @@ fn bait_file_honeytoken_is_attributed_across_sessions() {
     let hit: Value = serde_json::from_str(&i.events[0]).unwrap();
     assert_eq!(hit["severity"], "critical");
     assert_eq!(hit["evidence"]["token_kind"], "env_admin_password");
-    assert_eq!(hit["evidence"]["cross_session"], true);
-    assert_eq!(hit["evidence"]["issued_to_session"], &probe.session[..8]);
+    assert_eq!(hit["evidence"]["cross_source"], true);
+    let probe_event: Value = serde_json::from_str(&probe.events[0]).unwrap();
+    let probe_source = probe_event["session"]["source"].as_str().unwrap();
+    assert_eq!(hit["evidence"]["issued_to_source"], &probe_source[..8]);
     // The original (probing) session is linked and flagged too.
     assert!(i
         .events
@@ -378,4 +380,113 @@ fn decoys_are_per_deployment() {
     });
     assert_ne!(a.manifest()["decoys"], b.manifest()["decoys"]);
     assert_ne!(a.deployment(), b.deployment());
+}
+
+// Regression tests from the first live benchmark round (2026-11-15).
+
+#[test]
+fn forged_forwarding_headers_are_detected() {
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    // Values the attacking agent actually sent in X-Forwarded-For.
+    for (n, forged) in [
+        "<script>alert(1)</script>",
+        "ZZZMARKER999",
+        "127.0.0.1%0d%0aX-Injected: yes",
+        "localhost",
+        "127.0.0.1/8",
+        "999.999.999.999",
+        "${7*7}",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // A separate client per case, because each rule reports once per session.
+        let mut r = req(&format!("203.0.113.{n}"), "curl/8.9", "GET", "/");
+        r.headers.push(("x-forwarded-for".into(), forged.into()));
+        let rules = rules_of(&e.inspect(&r).events);
+        assert!(
+            rules.contains(&"client.forged_forwarding".to_string()),
+            "{forged:?} not detected: {rules:?}"
+        );
+    }
+    // Headers real proxy chains produce must stay clean.
+    for real in [
+        "203.0.113.5",
+        "203.0.113.5, 10.0.0.1",
+        "unknown, 198.51.100.4",
+        "[2001:db8::1]:4711",
+        "198.51.100.4:8443",
+    ] {
+        let mut r = req("198.51.100.77", BROWSER, "GET", "/");
+        r.headers.push(("x-forwarded-for".into(), real.into()));
+        assert!(
+            e.inspect(&r).events.is_empty(),
+            "false positive on {real:?}"
+        );
+    }
+    let mut r = req("198.51.100.78", BROWSER, "GET", "/");
+    r.headers.push((
+        "forwarded".into(),
+        "for=\"[2001:db8:cafe::17]:4711\";proto=https, for=unknown, for=_hidden".into(),
+    ));
+    assert!(e.inspect(&r).events.is_empty());
+}
+
+#[test]
+fn malformed_bodies_are_inspected_and_signalled() {
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    let mut r = with_body(
+        req("203.0.113.9", "curl/8.9", "POST", "/login"),
+        "text/plain",
+        "{\"email\":\"' OR 1=1--\",",
+    );
+    r.body_error = "entity.parse.failed".into();
+    let rules = rules_of(&e.inspect(&r).events);
+    assert!(
+        rules.contains(&"request.malformed_body".to_string()),
+        "{rules:?}"
+    );
+    assert!(
+        rules.contains(&"payload.sqli".to_string()),
+        "payload inside a broken body: {rules:?}"
+    );
+}
+
+#[test]
+fn bait_comment_is_identical_across_tools_on_one_machine() {
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    let page = "<!doctype html><html><body><h1>Shop</h1></body></html>";
+    let html = |e: &mut Engine, ip: &str, ua: &str| {
+        let i = e.inspect(&req(ip, ua, "GET", "/"));
+        let out = e.decorate_html(&i.session, page).unwrap();
+        out[out.find("<!--").unwrap()..out.find("-->").unwrap()].to_string()
+    };
+    let curl = html(&mut e, "203.0.113.9", "curl/8.9");
+    let python = html(&mut e, "203.0.113.9", "Python-urllib/3.12");
+    let empty = html(&mut e, "203.0.113.9", "");
+    assert_eq!(
+        curl, python,
+        "same machine, different tool: comment must not change"
+    );
+    assert_eq!(curl, empty);
+    // Another network gets the same wording and route with a different key.
+    let other = html(&mut e, "198.51.100.4", "curl/8.9");
+    assert_ne!(curl, other);
+    let strip_key = |s: &str| {
+        let k = s.find("sk_live_").unwrap();
+        format!("{}{}", &s[..k], &s[k + 8 + 24..])
+    };
+    assert_eq!(strip_key(&curl), strip_key(&other));
+}
+
+#[test]
+fn nested_jndi_lookup_is_detected() {
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    let r = req(
+        "203.0.113.9",
+        "curl/8.9",
+        "GET",
+        "/search?q=%24%7B%7Bjndi%3Aldap%3A%2F%2Fx%7D%7D",
+    );
+    assert!(rules_of(&e.inspect(&r).events).contains(&"payload.jndi".to_string()));
 }

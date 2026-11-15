@@ -128,13 +128,18 @@ impl Decoys {
 
     /// The per-session HTML comment. Several phrasings so the bait is not a
     /// fixed string; the honeytoken inside is bound to the session.
-    pub fn html_comment(&self, keys: &Keys, session: &str) -> Option<String> {
+    /// The bait comment. Its wording and route are fixed for the whole
+    /// deployment, so every visitor sees the same comment. Only the API key
+    /// differs between sources, which is what traces a stolen key back to
+    /// the network that received it. Varying more than the key would let an
+    /// attacker who compares responses notice the bait.
+    pub fn html_comment(&self, keys: &Keys, source: &str) -> Option<String> {
         if self.routes.is_empty() {
             return None;
         }
-        let pick = keys.u32("decoy/comment", &[session.as_bytes()]) as usize;
+        let pick = keys.u32("decoy/comment", &[]) as usize;
         let route = &self.routes[pick % self.routes.len()];
-        let key = mint_mixed(keys, session_tag(session), Variant::CommentApiKey);
+        let key = mint_mixed(keys, session_tag(source), Variant::CommentApiKey);
         let (build, param) = (&self.build_id, &self.debug_param);
         Some(match (pick >> 8) % 4 {
             0 => format!("<!-- TODO(ops): {route} is still live for the partner sync job. Auth: Bearer sk_live_{key} (rotate after migration) -->"),
