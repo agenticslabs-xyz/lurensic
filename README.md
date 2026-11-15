@@ -145,7 +145,7 @@ suite in [`examples/demo-shop/test/agent-sim.test.mjs`](examples/demo-shop/test/
 | Careful agent | uses a real account only, tests IDOR and mass assignment | `tamper.sealed_value`, `decoy.param` |
 | Noisy scanner | sprays payloads and enumerates with a wordlist | `payload.*`, `behavior.enumeration` |
 
-Results against live agents, with the full method so others can reproduce them, are in [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Results against live AI pentest agents, with the raw logs, are in [benchmarks/](benchmarks/README.md). The method is in [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 ## Repository layout
 

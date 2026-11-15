@@ -10,3 +10,4 @@ packages/node/wasm/
 .DS_Store
 bench-runs/
 .kagami-secret
+.bench-private-words

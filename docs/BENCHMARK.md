@@ -60,8 +60,22 @@ Each round folder holds `kagami-events.jsonl` with the detections, `access.jsonl
 user agent, header order and Kagami session) and `run.json` with the settings and the start and finish times.
 Use `--port` to choose another port and `--mode observe` to run without deception.
 
+## Turning a round into a published result
+
+```bash
+pnpm bench:report bench-runs/<round>              # writes report.md and report.json into the round folder
+pnpm bench:report bench-runs/<round> --publish    # also copies the report and logs into benchmarks/<round>/
+```
+
+The report lists every session that triggered a detection, how long and how many requests it took to reach
+the first detection, the first tripwire and the flag, a timeline of each session's detections, and the rules
+that fired. Publishing refuses to run if the event log hash chain does not verify. It also refuses if any word
+listed in the local, git-ignored file `.bench-private-words` appears in the files, which keeps private names
+out of the public repository. Each publish rebuilds the index in `benchmarks/README.md`.
+
 Only point attackers at deployments you own or are authorised to test.
 
 ## Results
 
-*Pending the first live runs.* The scripted persona suite (`examples/demo-shop/test/agent-sim.test.mjs`) runs in CI today.
+Published rounds and their raw logs are listed in [benchmarks/README.md](../benchmarks/README.md). The scripted
+persona suite in `examples/demo-shop/test/agent-sim.test.mjs` also runs in CI on every change.
