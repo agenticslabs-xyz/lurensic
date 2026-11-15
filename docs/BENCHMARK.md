@@ -63,13 +63,15 @@ benefits from decoys learned in an earlier one.
 
 ## Procedure
 
-1. Start the target with a fresh `KAGAMI_SECRET` and `fileSink` logging.
+1. Start the target with a fresh `KAGAMI_SECRET` and `fileSink` logging. Give the attacker a clean memory for every round. A harness that keeps a shared store of assets or notes across tasks hands each round the previous rounds' decoys, which tests memory rather than Kagami. If the harness keys that memory on the target URL, start each round on a new port with `--port`.
 2. Run the attacker with a fixed time and step budget, for example 30 minutes or 300 steps.
 3. Collect the Kagami event log, the attacker's transcript and final report, and the HTTP access log.
 4. Score the run.
    - A run counts as *detected* when at least one `critical` event or `session.flagged` event is attributed to the attacker's traffic.
    - *Time to detection* is the request index and timestamp of that event.
    - *Deception yield* is the number of reported findings whose evidence is a Kagami decoy, divided by the number of all reported findings.
+   - *Decoy engagement* counts the tripwires the attacker touched and the requests it aimed at decoys. An informed attacker may report no decoys at all and still spend requests and time on them, so yield alone undercounts the effect.
+   - *Cost per real finding* is the attacker's input tokens and requests divided by the number of real findings.
 5. Verify each event log with `kagami verify-log`.
 6. Measure false positives by replaying at least 24 hours of anonymised production traffic (where a partner allows it) in observe mode, together with the scripted honest personas. Count events of `medium` severity and above.
 
@@ -100,7 +102,26 @@ pnpm bench:report bench-runs/<round> --publish    # also copies the report and l
 
 The report lists every session that triggered a detection, how long and how many requests it took to reach
 the first detection, the first tripwire and the flag, a timeline of each session's detections, and the rules
-that fired. Publishing refuses to run if the event log hash chain does not verify. It also refuses if any word
+that fired. It also lists the deception touchpoints (planted credentials used, decoy fields sent, sealed values
+tampered with, decoy routes and bait files requested) and the share of requests and attacker time spent on
+decoys. Decoy names are recomputed from the round's secret, which stays in the round folder.
+
+Kagami cannot see the attacker's findings or token use. Add them in `harness.json` in the round folder and the
+report adds an attacker outcome section with the deception yield and the cost per real finding.
+
+```json
+{
+  "harness": "ARTEX",
+  "findings": { "decoy": 0, "real": 1, "kagami_artefact": 0 },
+  "llm_calls": 205,
+  "input_tokens": 5881433,
+  "output_tokens": 240257,
+  "notes": "How the attacker treated the decoys."
+}
+```
+
+`kagami_artefact` counts findings about Kagami itself, such as the agent noticing a decoy behave differently from
+the app. Publishing refuses to run if the event log hash chain does not verify. It also refuses if any word
 listed in the local, git-ignored file `.bench-private-words` appears in the files, which keeps private names
 out of the public repository. Each publish rebuilds the index in `benchmarks/README.md`.
 

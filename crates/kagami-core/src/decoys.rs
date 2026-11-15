@@ -126,8 +126,15 @@ impl Decoys {
         }
     }
 
-    /// The per-session HTML comment. Several phrasings so the bait is not a
-    /// fixed string; the honeytoken inside is bound to the session.
+    /// Does the page at `norm_path` carry the bait comment? The home page
+    /// always does. Other pages are a keyed subset of about one in three,
+    /// because a comment that appears on every page reads as injected rather
+    /// than as a leftover in one template.
+    pub fn comment_on(&self, keys: &Keys, norm_path: &str) -> bool {
+        let p = norm_path.trim_end_matches('/');
+        p.is_empty() || keys.u32("decoy/comment/page", &[p.as_bytes()]) % 3 == 0
+    }
+
     /// The bait comment. Its wording and route are fixed for the whole
     /// deployment, so every visitor sees the same comment. Only the API key
     /// differs between sources, which is what traces a stolen key back to
@@ -172,6 +179,83 @@ pub fn decorate_html(html: &str, comment: &str, variant: u32) -> Option<String> 
     out.push_str(comment);
     out.push('\n');
     out.push_str(&html[at..]);
+    Some(out)
+}
+
+/// Index of the `>` that closes the tag starting before `from`, skipping
+/// quoted attribute values.
+fn tag_end(lower: &str, from: usize) -> Option<usize> {
+    let mut quote = None;
+    for (i, b) in lower.bytes().enumerate().skip(from) {
+        match (quote, b) {
+            (Some(q), _) if b == q => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(b),
+            (None, b'>') => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The value of the `method` attribute of a lowercased opening tag.
+fn form_method(tag: &str) -> &str {
+    let b = tag.as_bytes();
+    let mut at = 0;
+    while let Some(i) = tag[at..].find("method") {
+        let s = at + i;
+        at = s + 6;
+        if !b[s - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let rest = tag[at..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        return match rest.as_bytes().first() {
+            Some(&q @ (b'"' | b'\'')) => rest[1..].split(q as char).next().unwrap_or(""),
+            _ => rest
+                .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+                .next()
+                .unwrap_or(""),
+        };
+    }
+    ""
+}
+
+/// Add a hidden decoy field to every POST form in an HTML document. A
+/// browser sends the value back unchanged, which is not a detection. An
+/// agent that edits hidden fields to test for privilege escalation submits a
+/// different value, which is. Returns `None` when there is no POST form.
+pub fn decorate_forms(html: &str, field: &str, value: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let input = format!("<input type=\"hidden\" name=\"{field}\" value=\"{value}\">");
+    let mut out = String::with_capacity(html.len() + input.len());
+    let (mut last, mut pos) = (0, 0);
+    while let Some(i) = lower[pos..].find("<form") {
+        let start = pos + i;
+        pos = start + 5;
+        if !matches!(
+            lower.as_bytes().get(pos),
+            Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/')
+        ) {
+            continue;
+        }
+        let Some(end) = tag_end(&lower, pos) else {
+            break;
+        };
+        pos = end + 1;
+        if form_method(&lower[start..end]) == "post" {
+            out.push_str(&html[last..=end]);
+            out.push_str(&input);
+            last = end + 1;
+        }
+    }
+    if last == 0 {
+        return None;
+    }
+    out.push_str(&html[last..]);
     Some(out)
 }
 
@@ -247,6 +331,33 @@ mod tests {
             out,
             "<html><BODY class=a><!-- x -->\n<p>hi</p></BODY></html>"
         );
+    }
+
+    #[test]
+    fn form_decoration_only_touches_post_forms() {
+        let html = r#"<html><body><form action="/search"><input name=q></form>
+<FORM class="a>b" METHOD = 'Post' action=/login><input name=email></FORM>
+<form method=post><button>x</button></form><formation></formation></body></html>"#;
+        let out = decorate_forms(html, "staff_level", "member").unwrap();
+        let hidden = r#"<input type="hidden" name="staff_level" value="member">"#;
+        assert_eq!(out.matches(hidden).count(), 2);
+        assert!(out.contains(&format!("action=/login>{hidden}<input name=email>")));
+        assert!(out.contains(&format!("<form method=post>{hidden}<button>")));
+        assert!(out.contains(r#"<form action="/search"><input name=q>"#));
+        assert_eq!(out.replace(hidden, ""), html, "nothing else changes");
+        assert!(decorate_forms("<form method=get></form>", "x", "y").is_none());
+        assert!(decorate_forms("<p>no forms</p><form method=post", "x", "y").is_none());
+    }
+
+    #[test]
+    fn comment_is_on_home_and_a_subset_of_pages() {
+        let k = keys("a");
+        let d = derive(&k, &[], &[]);
+        assert!(d.comment_on(&k, "/"));
+        let pages: Vec<String> = (0..300).map(|n| format!("/products/{n}")).collect();
+        let on = pages.iter().filter(|p| d.comment_on(&k, p)).count();
+        assert!((60..140).contains(&on), "about one page in three, got {on}");
+        assert_eq!(d.comment_on(&k, "/search"), d.comment_on(&k, "/search/"));
     }
 
     #[test]

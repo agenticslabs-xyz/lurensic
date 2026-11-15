@@ -80,6 +80,8 @@ export interface Verdict {
   delayMs: number;
   decorateHtml: boolean;
   decorateJson: boolean;
+  /** Every rule this request matched, including repeats that produce no new event. */
+  rules: string[];
 }
 
 export interface KagamiOptions {
@@ -90,10 +92,15 @@ export interface KagamiOptions {
   /** Kill switch. Env `KAGAMI_DISABLED=1` also disables Kagami. */
   enabled?: boolean;
   decoys?: {
-    /** Per-session bait comments in HTML documents (protect mode). Default true. */
+    /** Bait comment in the home page and a keyed subset of other HTML documents (protect mode). Default true. */
     html?: boolean;
     /** Decoy field in JSON object responses (protect mode). Default false. */
     json?: boolean;
+    /**
+     * The decoy field as a hidden input in POST forms (protect mode). Default false.
+     * Your form handlers then receive one extra field, so enable it only if they ignore unknown fields.
+     */
+    forms?: boolean;
     /** Fake `.env`, `.git/config`, `.aws/credentials` (protect mode). Default true. */
     baitFiles?: boolean;
     /** Answer derived decoy routes (protect mode). Default true. */

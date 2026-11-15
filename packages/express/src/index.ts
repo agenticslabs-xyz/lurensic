@@ -21,6 +21,8 @@ export interface KagamiRequestContext {
   readonly source: string;
   readonly state: Verdict['state'];
   readonly score: number;
+  /** Every rule this request matched, including repeats that produce no new event. */
+  readonly rules: readonly string[];
   /** Seal a value you hand to the client (ID, price, role). */
   seal(value: string | number): string;
   /**
@@ -87,7 +89,12 @@ function looksLikeHtml(s: string): boolean {
   return head.startsWith('<!doctype html') || head.startsWith('<html');
 }
 
-function wrapSend(res: Response, k: Kagami, verdict: Verdict): void {
+/** The body of an app 401, kept so decoy routes can answer 401 in the same format. */
+interface Sample401 {
+  value?: { contentType: string; body: string };
+}
+
+function wrapSend(res: Response, k: Kagami, verdict: Verdict, path: string, sample: Sample401): void {
   const original = res.send;
   res.send = function patchedSend(this: Response, body?: unknown) {
     let out = body;
@@ -97,8 +104,10 @@ function wrapSend(res: Response, k: Kagami, verdict: Verdict): void {
         if (verdict.decorateJson && ct.includes('json')) {
           out = k.decorateJson(verdict, body);
         } else if (verdict.decorateHtml && (ct.includes('text/html') || (!ct && looksLikeHtml(body)))) {
-          out = k.decorateHtml(verdict, body);
+          out = k.decorateHtml(verdict, body, path);
         }
+      } else if (typeof body === 'string' && this.statusCode === 401 && body.length <= 1024) {
+        sample.value = { contentType: String(this.get('Content-Type') ?? ''), body };
       }
     } catch {
       out = body;
@@ -133,11 +142,13 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
       session: verdict.session,
       source: verdict.source,
       state: verdict.state,
+      rules: verdict.rules,
       score: verdict.score,
       seal: (value) => k.seal(value),
       verify: (sealed, name) => k.verify(info, sealed, name),
     };
-    res.once('finish', () => k.response(info, res.statusCode));
+    const sample: Sample401 = {};
+    res.once('finish', () => k.response(info, res.statusCode, sample.value));
     const action = verdict.action;
     if (action.type === 'respond') {
       try {
@@ -149,9 +160,9 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
         if (res.headersSent) return true;
       }
     }
-    if (decorate && (verdict.decorateHtml || verdict.decorateJson)) {
+    if (decorate && (verdict.decorateHtml || verdict.decorateJson || k.wants401Body)) {
       try {
-        wrapSend(res, k, verdict);
+        wrapSend(res, k, verdict, info.path, sample);
       } catch {
         /* fail open */
       }

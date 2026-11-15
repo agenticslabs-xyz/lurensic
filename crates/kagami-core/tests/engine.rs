@@ -50,6 +50,22 @@ fn rules_of(events: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The honeytoken in a fake .env, whichever service the deployment's layout uses.
+fn env_credential(env: &str) -> &str {
+    env.lines()
+        .find_map(|l| {
+            l.strip_prefix("SMTP_PASS=")
+                .or_else(|| l.strip_prefix("STRIPE_SECRET_KEY=sk_live_"))
+                .or_else(|| {
+                    l.strip_prefix("DATABASE_URL=postgres://")
+                        .and_then(|r| r.split_once(':'))
+                        .and_then(|(_, r)| r.split_once('@'))
+                        .map(|(pw, _)| pw)
+                })
+        })
+        .expect("a credential in the fake .env")
+}
+
 fn attack_battery() -> Vec<Request> {
     vec![
         req("203.0.113.9", "sqlmap/1.8", "GET", "/.env"),
@@ -99,7 +115,7 @@ fn observe_mode_never_changes_anything() {
     assert!(saw_events, "observe mode still detects");
     assert_eq!(e.inspect(&battery[0]).state, State::Flagged);
     assert!(e
-        .decorate_html("abcd", "<html><body>x</body></html>")
+        .decorate_html("abcd", "/", "<html><body>x</body></html>")
         .is_none());
     assert!(e.decorate_json(r#"{"a":1}"#).is_none());
 }
@@ -158,10 +174,9 @@ fn bait_file_honeytoken_is_attributed_across_sessions() {
     assert_eq!(rules_of(&probe.events), vec!["bait.path"]);
     assert_eq!(probe.state, State::Suspicious);
 
-    let password = body
-        .lines()
-        .find_map(|l| l.strip_prefix("ADMIN_PASSWORD="))
-        .unwrap();
+    // The fake .env holds one or two service credentials. An agent tries
+    // whichever it finds as a password elsewhere on the site.
+    let password = env_credential(body);
     // The attacker rotates IP and user agent before using the stolen password.
     let login = with_body(
         req("192.0.2.200", BROWSER, "POST", "/login"),
@@ -174,7 +189,10 @@ fn bait_file_honeytoken_is_attributed_across_sessions() {
     assert!(rules.contains(&"honeytoken.used".to_string()), "{rules:?}");
     let hit: Value = serde_json::from_str(&i.events[0]).unwrap();
     assert_eq!(hit["severity"], "critical");
-    assert_eq!(hit["evidence"]["token_kind"], "env_admin_password");
+    assert!(hit["evidence"]["token_kind"]
+        .as_str()
+        .unwrap()
+        .starts_with("env_"));
     assert_eq!(hit["evidence"]["cross_source"], true);
     let probe_event: Value = serde_json::from_str(&probe.events[0]).unwrap();
     let probe_source = probe_event["session"]["source"].as_str().unwrap();
@@ -196,6 +214,7 @@ fn html_comment_leads_to_decoy_route() {
     let html = e
         .decorate_html(
             &page.session,
+            "/",
             "<!doctype html><html><head></head><body><h1>Shop</h1></body></html>",
         )
         .unwrap();
@@ -210,7 +229,18 @@ fn html_comment_leads_to_decoy_route() {
 
     let mut no_auth = req("203.0.113.50", "Mozilla/5.0 agent", "GET", route);
     let i = e.inspect(&no_auth);
-    assert!(matches!(i.action, Action::Respond { status: 401, .. }));
+    let Action::Respond {
+        status: 401,
+        body,
+        headers,
+    } = &i.action
+    else {
+        panic!("expected 401")
+    };
+    // A plain error with no hint about how to authenticate, and no realm
+    // header the app itself does not send.
+    assert_eq!(body, r#"{"error":"unauthorized"}"#);
+    assert!(!headers.iter().any(|(k, _)| k == "www-authenticate"));
     assert_eq!(rules_of(&i.events), vec!["decoy.route"]);
 
     no_auth
@@ -458,7 +488,7 @@ fn bait_comment_is_identical_across_tools_on_one_machine() {
     let page = "<!doctype html><html><body><h1>Shop</h1></body></html>";
     let html = |e: &mut Engine, ip: &str, ua: &str| {
         let i = e.inspect(&req(ip, ua, "GET", "/"));
-        let out = e.decorate_html(&i.session, page).unwrap();
+        let out = e.decorate_html(&i.session, "/", page).unwrap();
         out[out.find("<!--").unwrap()..out.find("-->").unwrap()].to_string()
     };
     let curl = html(&mut e, "203.0.113.9", "curl/8.9");
@@ -489,4 +519,258 @@ fn nested_jndi_lookup_is_detected() {
         "/search?q=%24%7B%7Bjndi%3Aldap%3A%2F%2Fx%7D%7D",
     );
     assert!(rules_of(&e.inspect(&r).events).contains(&"payload.jndi".to_string()));
+}
+
+// Regression tests from the second live benchmark round (2026-11-15). An
+// agent told that Kagami might be present recognised the side bait but
+// treated the decoy field in JSON as real app data.
+
+#[test]
+fn decoy_route_401_copies_the_app_401_body() {
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    let route = e.manifest()["decoys"]["routes"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut app_401 = req("203.0.113.9", "curl/8.9", "GET", "/api/orders");
+    app_401.status = 401;
+    app_401.content_type = "application/json; charset=utf-8".into();
+    app_401.body = r#"{"error":"Not signed in","code":40101}"#.into();
+    assert!(e.response(&app_401).learned_401);
+
+    let i = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", &route));
+    let Action::Respond { status, body, .. } = &i.action else {
+        panic!("expected a decoy reply")
+    };
+    assert_eq!(*status, 401);
+    assert_eq!(body, r#"{"error":"Not signed in","code":40101}"#);
+
+    // Only small flat JSON objects are used, and the first one wins.
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    for (ct, body) in [
+        ("text/html", "<h1>Sign in</h1>"),
+        (
+            "application/json",
+            r#"{"error":{"user":"alice@example.com"}}"#,
+        ),
+        ("application/json", "[]"),
+    ] {
+        let mut r = app_401.clone();
+        r.content_type = ct.into();
+        r.body = body.into();
+        assert!(!e.response(&r).learned_401, "{body} must not be learned");
+    }
+}
+
+#[test]
+fn hidden_form_field_catches_privilege_edits_but_not_browsers() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.form_decoys = true);
+    let m = e.manifest();
+    let field = m["decoys"]["json_field"].as_str().unwrap().to_string();
+    let value = m["decoys"]["json_value"].as_str().unwrap().to_string();
+    let page = e.inspect(&req("198.51.100.7", BROWSER, "GET", "/login"));
+    assert!(page.decorate_html);
+    let html = e
+        .decorate_html(
+            &page.session,
+            "/login",
+            r#"<!doctype html><html><body><form method="post" action="/login"><input name="email"></form></body></html>"#,
+        )
+        .unwrap();
+    assert!(html.contains(&format!(
+        r#"<input type="hidden" name="{field}" value="{value}">"#
+    )));
+
+    let browser = with_body(
+        req("198.51.100.7", BROWSER, "POST", "/login"),
+        "application/x-www-form-urlencoded",
+        &format!("{field}={value}&email=a%40b.c&password=hunter2"),
+    );
+    assert!(e.inspect(&browser).events.is_empty());
+
+    let agent = with_body(
+        req("203.0.113.9", "curl/8.9", "POST", "/login"),
+        "application/x-www-form-urlencoded",
+        &format!("{field}=admin&email=a%40b.c&password=hunter2"),
+    );
+    let i = e.inspect(&agent);
+    assert!(rules_of(&i.events).contains(&"decoy.param".to_string()));
+    assert_eq!(i.state, State::Flagged);
+}
+
+#[test]
+fn bait_comment_is_on_some_pages_only() {
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    let doc = "<!doctype html><html><body><h1>x</h1></body></html>";
+    let i = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", "/"));
+    let with: Vec<bool> = (0..60)
+        .map(|n| {
+            e.decorate_html(&i.session, &format!("/products/{n}"), doc)
+                .is_some()
+        })
+        .collect();
+    assert!(with.iter().any(|w| *w) && with.iter().any(|w| !*w));
+    // The same page always gets the same answer.
+    let again = e.decorate_html(&i.session, "/products/7", doc).is_some();
+    assert_eq!(again, with[7]);
+}
+
+#[test]
+fn fake_env_is_short_and_has_the_same_layout_for_every_source() {
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    let body = |e: &mut Engine, ip: &str| {
+        let Action::Respond { body, .. } = e.inspect(&req(ip, "curl/8.9", "GET", "/.env")).action
+        else {
+            panic!("expected fake .env")
+        };
+        body
+    };
+    let a = body(&mut e, "203.0.113.9");
+    let b = body(&mut e, "198.51.100.4");
+    for jackpot in ["ADMIN_PASSWORD", "AWS_SECRET_ACCESS_KEY", "JWT_SECRET"] {
+        assert!(!a.contains(jackpot), "{jackpot} should not be in the .env");
+    }
+    assert!(a.lines().count() <= 14, "{a}");
+    let keys = |s: &str| -> Vec<String> {
+        s.lines()
+            .map(|l| l.split('=').next().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(keys(&a), keys(&b), "the layout is fixed per deployment");
+    assert_ne!(
+        env_credential(&a),
+        env_credential(&b),
+        "credentials differ per source"
+    );
+}
+
+// Regression test from the third live benchmark round (2026-11-16). The
+// agent sent absolute-form request targets (`GET http://host/healthz`).
+// Kagami matched paths on the full URL, so the ignored /healthz got the JSON
+// decoy field and the home page lost the bait comment. Comparing the two
+// forms told the agent which parts of the site were Kagami.
+
+#[test]
+fn absolute_form_targets_are_treated_like_their_path() {
+    let (mut e, _) = engine(Mode::Protect, |c| {
+        c.json_decoys = true;
+        c.ignore_paths = vec!["/healthz".into()];
+    });
+    for (origin, absolute) in [
+        ("/.env", "http://127.0.0.1:41837/.env"),
+        ("/healthz", "http://example.com/healthz"),
+        ("/", "http://host.docker.internal:41837/"),
+        ("/", "HTTP://127.0.0.1:41837"),
+    ] {
+        let a = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", origin));
+        let b = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", absolute));
+        let body = |i: &kagami_core::Inspection| match &i.action {
+            Action::Respond { status, body, .. } => format!("{status} {body}"),
+            Action::Pass => "pass".into(),
+        };
+        assert_eq!(body(&a), body(&b), "{absolute}");
+        assert_eq!(a.decorate_html, b.decorate_html, "{absolute}");
+        assert_eq!(a.decorate_json, b.decorate_json, "{absolute}");
+        assert_eq!(
+            e.decorate_html(&a.session, origin, "<html><body></body></html>"),
+            e.decorate_html(&b.session, absolute, "<html><body></body></html>"),
+            "{absolute}"
+        );
+    }
+    let i = e.inspect(&req(
+        "198.51.100.4",
+        "raw",
+        "GET",
+        "http://127.0.0.1:41837/search",
+    ));
+    let rules = rules_of(&i.events);
+    assert!(
+        rules.contains(&"request.absolute_target".to_string()),
+        "{rules:?}"
+    );
+    assert!(!rules.contains(&"payload.ssrf".to_string()), "{rules:?}");
+    // An origin-form path that merely contains a URL is not absolute-form.
+    let i = e.inspect(&req(BROWSER, BROWSER, "GET", "/redirect/http://x.example/"));
+    assert!(!rules_of(&i.events).contains(&"request.absolute_target".to_string()));
+}
+
+// Regression tests from the fourth live benchmark round (2026-11-16).
+
+#[test]
+fn payloads_injected_into_the_user_agent_share_one_session() {
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    let base = "sqlmap/1.10.11#pip (https://sqlmap.org)";
+    let injected: Vec<String> = [
+        "' AND 2017=7063-- WVrd",
+        ") AND 4540=1248-- NouK",
+        "',.))))()\"",
+        "'vBKFQT<'\">)WthlSo",
+        " AND 3647=4499-- fJIG",
+    ]
+    .iter()
+    .map(|p| format!("{base}{p}"))
+    .collect();
+    let sessions: std::collections::HashSet<String> = injected
+        .iter()
+        .map(|ua| {
+            e.inspect(&req("203.0.113.9", ua, "GET", "/search?q=x"))
+                .session
+        })
+        .collect();
+    assert_eq!(
+        sessions.len(),
+        1,
+        "every injected variant lands in one session"
+    );
+    // sqlmap also replaces the whole header with a payload.
+    for ua in [
+        "-1015 ORDER BY 1#",
+        "sqlmap/1.10.11#pip (https://sqlmap.org));SELECT SLEEP(5)#",
+        "(SELECT (CASE WHEN (1551=4503) THEN 1 ELSE 0 END))",
+    ] {
+        let s = e.inspect(&req("203.0.113.9", ua, "GET", "/")).session;
+        assert!(
+            sessions.contains(&s),
+            "{ua} should join the injected session"
+        );
+    }
+
+    // Different payload types sent under different injected user agents add
+    // up in the one session, as the separate attacks of one scanner should.
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    let mut last = None;
+    for (ua, q) in injected.iter().zip([
+        "%27%20OR%201%3D1--",
+        "%7B%7B7*7%7D%7D",
+        "%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+        "..%2F..%2F..%2Fetc%2Fpasswd",
+    ]) {
+        last = Some(e.inspect(&req("203.0.113.9", ua, "GET", &format!("/search?q={q}"))));
+    }
+    assert_eq!(last.unwrap().state, State::Flagged);
+
+    // Ordinary user agents keep their own sessions.
+    let a = e.inspect(&req("203.0.113.9", BROWSER, "GET", "/")).session;
+    let b = e
+        .inspect(&req("203.0.113.9", "curl/8.9", "GET", "/"))
+        .session;
+    assert_ne!(a, b);
+    assert!(!sessions.contains(&a) && !sessions.contains(&b));
+}
+
+#[test]
+fn only_the_plain_env_file_is_served() {
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    let served = |e: &mut Engine, p: &str| {
+        matches!(
+            e.inspect(&req("203.0.113.9", "curl/8.9", "GET", p)).action,
+            Action::Respond { .. }
+        )
+    };
+    assert!(served(&mut e, "/.env"));
+    for p in ["/.env.local", "/.env.production", "/.env.bak"] {
+        assert!(!served(&mut e, p), "{p} should get the app's own 404");
+    }
+    let i = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", "/.env.local"));
+    assert_eq!(rules_of(&i.events), vec!["bait.path"]);
 }

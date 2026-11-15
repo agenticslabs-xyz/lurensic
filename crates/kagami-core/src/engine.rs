@@ -72,6 +72,9 @@ pub struct Inspection {
     pub delay_ms: u32,
     pub decorate_html: bool,
     pub decorate_json: bool,
+    /// Every rule this request matched, including repeats that produce no
+    /// new event. Hosts can record it per request for analysis.
+    pub rules: Vec<&'static str>,
     pub events: Vec<String>,
 }
 
@@ -79,6 +82,8 @@ pub struct Inspection {
 pub struct ResponseOutcome {
     pub score: u32,
     pub state: State,
+    /// True once the app's 401 body is known, so hosts can stop sending it.
+    pub learned_401: bool,
     pub events: Vec<String>,
 }
 
@@ -134,6 +139,58 @@ pub struct Engine {
     sessions: Store,
     log: EventLog,
     deployment: String,
+    /// The body of the first JSON 401 the app sent itself. Decoy routes
+    /// answer with the same body so their errors match the app's format.
+    app_401: Option<String>,
+}
+
+/// The part of a user agent that identifies a session. Scanners such as
+/// sqlmap inject payloads into the User-Agent header, and with the full
+/// header in the session key every payload started a new, clean session (the
+/// fourth live round produced 4,335 sessions from one machine). sqlmap both
+/// appends payloads to its own name and replaces the whole header, so no
+/// prefix of the header is stable. A user agent that holds characters no
+/// real one uses, or that matches a payload rule, is attacker data, and all
+/// such user agents from one address share a single session and its score.
+fn session_user_agent(ua: &str) -> &str {
+    const PAYLOAD: &[char] = &['\'', '"', '<', '>', '=', '$', '`', '{', '}', '|', '\\'];
+    // SQL fragments that are too common in search text to be payload rules,
+    // but never appear in a real user agent.
+    const SQL: &[&str] = &[
+        "))", "--", ";select", "; select", "order by", "union ", "select ", "sleep(",
+    ];
+    const INJECTED: &str = "\u{0}injected-user-agent";
+    if ua.contains(PAYLOAD) || ua.trim_end().ends_with('#') {
+        return INJECTED;
+    }
+    let lower = ua.to_ascii_lowercase();
+    if SQL.iter().any(|m| lower.contains(m)) {
+        return INJECTED;
+    }
+    let p = Param {
+        loc: Loc::Header,
+        name: "user-agent".into(),
+        value: ua.to_string(),
+    };
+    if rules::payload_rules(&p).is_empty() {
+        ua
+    } else {
+        INJECTED
+    }
+}
+
+/// Accept an app's 401 body as a template only if it is a small, flat JSON
+/// object. Anything larger may hold request-specific data.
+fn usable_401(content_type: &str, body: &str) -> bool {
+    if body.len() > 256 || !content_type.to_ascii_lowercase().contains("json") {
+        return false;
+    }
+    match serde_json::from_str::<Value>(body) {
+        Ok(Value::Object(m)) => {
+            !m.is_empty() && m.values().all(|v| !v.is_object() && !v.is_array())
+        }
+        _ => false,
+    }
 }
 
 impl Engine {
@@ -173,6 +230,10 @@ impl Engine {
                         (cfg.mode == Mode::Protect && cfg.json_decoys).into(),
                     ),
                     (
+                        "form_decoys",
+                        (cfg.mode == Mode::Protect && cfg.form_decoys).into(),
+                    ),
+                    (
                         "bait_files",
                         (cfg.mode == Mode::Protect && cfg.bait_files).into(),
                     ),
@@ -188,6 +249,7 @@ impl Engine {
                 sessions,
                 log,
                 deployment,
+                app_401: None,
             },
             out,
         ))
@@ -202,6 +264,7 @@ impl Engine {
     }
 
     pub fn session_id(&self, ip: &str, ua: &str) -> String {
+        let ua = session_user_agent(ua);
         hex(&self.keys.mac("session", &[ip.as_bytes(), ua.as_bytes()])[..8])
     }
 
@@ -258,6 +321,7 @@ impl Engine {
                 delay_ms: 0,
                 decorate_html: false,
                 decorate_json: false,
+                rules: Vec::new(),
                 events: Vec::new(),
             };
         }
@@ -278,6 +342,13 @@ impl Engine {
             hits.add(
                 &rules::MALFORMED_BODY,
                 ev(&[("error", sanitize(&req.body_error, 64).into())]),
+            );
+        }
+        // Browsers send absolute URLs only to proxies, never to a website.
+        if let Some(prefix) = normalize::absolute_prefix(&req.path) {
+            hits.add(
+                &rules::ABSOLUTE_TARGET,
+                ev(&[("snippet", sanitize(prefix, 160).into())]),
             );
         }
         if let Some(pattern) = rules::bait_path(&path) {
@@ -348,6 +419,7 @@ impl Engine {
 
         let ctx = self.ctx(req);
         let mut events = Vec::new();
+        let rules: Vec<&'static str> = hits.0.iter().map(|h| h.rule.id).collect();
         let (score, state) = self.apply(&sid, &source, now, hits.0, &ctx, &mut events);
         for prefix in linked {
             self.flag_linked(&prefix, &sid, now, &ctx, &mut events);
@@ -362,6 +434,7 @@ impl Engine {
             delay_ms: 0,
             decorate_html: false,
             decorate_json: false,
+            rules,
             events,
         };
         if self.cfg.mode == Mode::Protect {
@@ -392,7 +465,12 @@ impl Engine {
         let reply = if decoy_route && self.cfg.decoy_routes {
             let page = respond::page_from_query(&req.query);
             Some(respond::decoy_route(
-                &self.keys, source, &req.host, authorised, page,
+                &self.keys,
+                source,
+                &req.host,
+                authorised,
+                page,
+                self.app_401.as_deref(),
             ))
         } else if get && self.cfg.bait_files {
             respond::bait_file(&self.keys, path, source, &req.host)
@@ -415,7 +493,10 @@ impl Engine {
                 % span;
             i.delay_ms = t.min_ms + jitter;
         }
-        i.decorate_html = self.cfg.html_decoys && get && !self.decoys.routes.is_empty();
+        let comment = self.cfg.html_decoys
+            && !self.decoys.routes.is_empty()
+            && self.decoys.comment_on(&self.keys, path);
+        i.decorate_html = get && (comment || self.cfg.form_decoys);
         i.decorate_json = self.cfg.json_decoys;
     }
 
@@ -529,8 +610,15 @@ impl Engine {
     }
 
     /// Record the response status, which drives the enumeration and brute force signals.
+    /// For a 401, the host may pass the app's response body in `body` and its
+    /// content type in `content_type`. The first usable one becomes the body
+    /// of decoy route 401s.
     pub fn response(&mut self, req: &Request) -> ResponseOutcome {
         let now = req.now_ms;
+        if req.status == 401 && self.app_401.is_none() && usable_401(&req.content_type, &req.body) {
+            self.app_401 = Some(req.body.clone());
+        }
+        let learned_401 = self.app_401.is_some();
         let sid = self.session_id(&req.ip, req.user_agent());
         let path = normalize::norm_path(&req.path);
         if self.ignored(&path) {
@@ -538,6 +626,7 @@ impl Engine {
             return ResponseOutcome {
                 score,
                 state,
+                learned_401,
                 events: Vec::new(),
             };
         }
@@ -580,19 +669,36 @@ impl Engine {
         ResponseOutcome {
             score,
             state,
+            learned_401,
             events,
         }
     }
 
-    /// Add per-session bait to an HTML document. Protect mode only.
-    pub fn decorate_html(&self, session: &str, html: &str) -> Option<String> {
-        if self.cfg.mode != Mode::Protect || !self.cfg.html_decoys {
+    /// Add bait to an HTML document served at `path`. Protect mode only. The
+    /// bait comment goes on the pages `Decoys::comment_on` selects, and the
+    /// hidden decoy field goes into POST forms when form decoys are enabled.
+    pub fn decorate_html(&self, session: &str, path: &str, html: &str) -> Option<String> {
+        if self.cfg.mode != Mode::Protect {
             return None;
         }
-        let source = self.sessions.source_of(session).unwrap_or(session);
-        let comment = self.decoys.html_comment(&self.keys, source)?;
-        let variant = self.keys.u32("decoy/placement", &[]);
-        decoys::decorate_html(html, &comment, variant)
+        let path = normalize::norm_path(path);
+        let mut out: Option<String> = None;
+        if self.cfg.html_decoys && self.decoys.comment_on(&self.keys, &path) {
+            let source = self.sessions.source_of(session).unwrap_or(session);
+            if let Some(comment) = self.decoys.html_comment(&self.keys, source) {
+                let variant = self.keys.u32("decoy/placement", &[]);
+                out = decoys::decorate_html(html, &comment, variant);
+            }
+        }
+        if self.cfg.form_decoys {
+            let current = out.as_deref().unwrap_or(html);
+            if let Some(with_forms) =
+                decoys::decorate_forms(current, &self.decoys.mass_field, &self.decoys.mass_value)
+            {
+                out = Some(with_forms);
+            }
+        }
+        out
     }
 
     /// Add the decoy field to a JSON object response. Protect mode only.

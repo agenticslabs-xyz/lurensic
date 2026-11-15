@@ -18,6 +18,7 @@ const PASS: Omit<Verdict, 'session' | 'source'> = {
   delayMs: 0,
   decorateHtml: false,
   decorateJson: false,
+  rules: [],
 };
 
 interface CoreInspection {
@@ -29,6 +30,7 @@ interface CoreInspection {
   delay_ms: number;
   decorate_html: boolean;
   decorate_json: boolean;
+  rules?: string[];
   events: string[];
 }
 
@@ -42,6 +44,7 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
   const d = o.decoys ?? {};
   if (d.html !== undefined) cfg.html_decoys = d.html;
   if (d.json !== undefined) cfg.json_decoys = d.json;
+  if (d.forms !== undefined) cfg.form_decoys = d.forms;
   if (d.baitFiles !== undefined) cfg.bait_files = d.baitFiles;
   if (d.routes !== undefined) cfg.decoy_routes = d.routes;
   if (d.reservedPaths) cfg.reserved_paths = d.reservedPaths;
@@ -75,6 +78,7 @@ export class Kagami {
   private faults = 0;
   private lastRebuild = 0;
   private lastFaultWarn = 0;
+  private learned401 = false;
 
   constructor(options: KagamiOptions = {}) {
     const logger = options.logger ?? console;
@@ -124,6 +128,7 @@ export class Kagami {
       instance: this.instanceId,
     });
     this.core = core;
+    this.learned401 = false; // a rebuilt core starts without the app's 401 body
     this.deploymentId = res.deployment;
     this.pipeline.push(res.events);
   }
@@ -194,6 +199,7 @@ export class Kagami {
         delayMs: r.delay_ms,
         decorateHtml: r.decorate_html,
         decorateJson: r.decorate_json,
+        rules: r.rules ?? [],
       };
     } catch (err) {
       this.fault(err);
@@ -201,25 +207,42 @@ export class Kagami {
     }
   }
 
-  /** Report the response status. Enumeration and brute-force detection use it. */
-  response(req: HttpRequest, status: number): void {
+  /**
+   * True until Kagami has seen one of the app's own JSON 401 responses. While
+   * it is true, adapters pass the body of 401 responses to `response`, and
+   * decoy routes then answer 401 with the same body as the app.
+   */
+  get wants401Body(): boolean {
+    return this.mode === 'protect' && !this.learned401 && this.core !== null;
+  }
+
+  /**
+   * Report the response status. Enumeration and brute-force detection use it.
+   * For a 401, pass the response body and content type while `wants401Body` is true.
+   */
+  response(req: HttpRequest, status: number, body?: { contentType: string; body: string }): void {
     const core = this.live();
     if (!core) return;
     try {
-      const r = core.call<{ events: string[] }>('response', this.wire({ ...req, body: '' }, { status }));
+      const sample = status === 401 && body ? { contentType: body.contentType, body: body.body.slice(0, 1024) } : { body: '' };
+      const r = core.call<{ events: string[]; learned_401?: boolean }>('response', this.wire({ ...req, ...sample }, { status }));
+      if (r.learned_401) this.learned401 = true;
       if (r.events.length) this.pipeline.push(r.events);
     } catch (err) {
       this.fault(err);
     }
   }
 
-  /** Returns the HTML with per-session bait added, or the original HTML. */
-  decorateHtml(verdict: Verdict, html: string): string {
+  /**
+   * Returns the HTML with bait added, or the original HTML. `path` is the
+   * request path. It selects the pages that carry the bait comment.
+   */
+  decorateHtml(verdict: Verdict, html: string, path = ''): string {
     if (!verdict.decorateHtml || !verdict.session) return html;
     const core = this.live();
     if (!core) return html;
     try {
-      return core.call<{ body: string | null }>('decorate_html', { session: verdict.session, body: html }).body ?? html;
+      return core.call<{ body: string | null }>('decorate_html', { session: verdict.session, path, body: html }).body ?? html;
     } catch (err) {
       this.fault(err);
       return html;

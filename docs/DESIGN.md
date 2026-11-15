@@ -99,7 +99,10 @@ Java (Chicory) and .NET (wasmtime) all fit this model.
 ### 4.3 Sessions and scoring
 
 A session is the keyed hash of the IP address and user agent. This is deliberately simple. Attribution across IP
-and user agent changes comes from honeytokens (section 5.1), not from the session key.
+and user agent changes comes from honeytokens (section 5.1), not from the session key. One exception keeps scanners
+from resetting their own score. A user agent that contains payload characters, SQL fragments or anything a payload
+rule matches is attacker data, so every such user agent from one address shares a single session. In the fourth live
+round sqlmap injected into the User-Agent header and produced 4,334 distinct values, which now map to 13 sessions.
 
 Each rule has a score for its first hit in a session and a smaller score for later hits. By default a session
 becomes suspicious at a score of 30 and flagged at 70. Tripwire rules flag the session instantly. A session's state
@@ -133,12 +136,16 @@ issuing source that had already done something suspicious. Clean sessions from t
 Changing or stripping the seal is reported as `tamper.sealed_value`. Knowing the scheme does not help without the secret.
 
 **Decoy parameters.** Each deployment has two decoy names. One is a debug parameter mentioned in bait comments. The
-other is a JSON field added to object responses (opt-in). The JSON field triggers only when its value *changes*.
-Honest clients that send whole objects back with PUT echo it unchanged, so they never trigger it.
+other is a field added to JSON object responses and, as a hidden input, to POST forms (both opt-in). The field
+triggers only when its value *changes*. Honest clients that send whole objects back with PUT, and browsers that
+submit a form, echo it unchanged, so they never trigger it. In the second live benchmark round an agent that was
+told Kagami might be present avoided every bait file and comment but treated this field as real app data, so
+tripwires shaped like ordinary app data are the ones to extend.
 
 **Decoy routes.** Each deployment has two decoy routes, such as `/api/v1/partner/billing-sync`, derived from the
-secret and checked against `reservedPaths`. Without a token they return `401`. With a honeytoken they return
-fabricated records with cursor pagination that never ends.
+secret and checked against `reservedPaths`. Without a token they return `401` with the body of the first small
+JSON `401` the app itself sent, or `{"error":"unauthorized"}` until one has been seen, so the decoy's errors match
+the app's format. With a honeytoken they return fabricated records with cursor pagination that never ends.
 
 ### 5.2 Signals (accumulate)
 
@@ -167,6 +174,7 @@ byte-set prefilter lets ordinary values skip nearly the whole pattern table.
 | `behavior.auth_failures` | medium | 30 and 10 | T1110 |
 | `client.forged_forwarding` | medium | 35 and 5 | |
 | `request.malformed_body` | low | 20 and 5 | |
+| `request.absolute_target` | low | 20 and 5 | |
 | `client.automation`, `client.ai_agent` | info | 5 and 0, 0 and 0 | |
 | `session.flagged` | high | state transition | |
 
@@ -174,7 +182,9 @@ byte-set prefilter lets ordinary values skip nearly the whole pattern table.
 writes, such as markup, a hostname, a CIDR range or an encoded line break. Private and loopback addresses do not fire
 it, because real proxy chains contain them. `request.malformed_body` fires when the host's body parser rejects the
 body. The Express adapter still inspects such requests, using the raw text from the parser error, so payloads inside
-a broken body are found as well.
+a broken body are found as well. `request.absolute_target` fires when the request line holds a full URL
+(`GET http://host/path HTTP/1.1`). Browsers send that form only to proxies. Kagami strips the scheme and host and
+handles the request exactly like one for the path alone, as the server's router does.
 
 Info level rules add to the score but never produce a standalone event. They appear in the `session.flagged` summary.
 
@@ -182,10 +192,11 @@ Info level rules add to the score but never produce a standalone event. They app
 
 | Feature | Default | What changes |
 |---|---|---|
-| Bait files (`/.env*`, `/.git/config`, `/.aws/credentials`) | on | Those paths return fake files instead of the app's response, which is normally a 404 |
-| Decoy routes | on | Two derived paths answer with a 401 or with fake data |
-| HTML decoys | on | One HTML comment per document, placed after `<body>` or before `</body>` (varies per session) |
+| Bait files (`/.env`, `/.git/config`, `/.aws/credentials`) | on | Those paths return fake files instead of the app's response, which is normally a 404. Variants such as `/.env.local` get the app's own response, because identical copies under several names read as bait, and probing them still raises `bait.path`. The `.env` is short and holds one or two service credentials. Its layout is fixed per deployment and only the credential values differ between sources |
+| Decoy routes | on | Two derived paths answer with a 401 in the app's own format or with fake data |
+| HTML decoys | on | One HTML comment on the home page and on a keyed subset of about one in three other pages, placed after `<body>` or before `</body>` (fixed per deployment) |
 | JSON decoys | **off** | One field added at the start of top-level JSON objects by text insertion, with key order and formatting preserved |
+| Form decoys | **off** | The same field added as a hidden input at the start of every POST form in HTML documents. The app receives one extra form field |
 | Tarpit | **off** | Flagged sessions are delayed by 0.8 to 2.5 seconds with jitter |
 
 Decoy responses go through the app's normal response path, so they carry the same headers as real
@@ -260,7 +271,7 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `secret` | `KAGAMI_SECRET` | At least 32 characters. Without it in production Kagami disables itself and warns. In development a temporary secret is used. |
 | `mode` | `KAGAMI_MODE` or `observe` | `observe` or `protect` |
 | `enabled` | `true` | `KAGAMI_DISABLED=1` also disables Kagami |
-| `decoys.html`, `decoys.json`, `decoys.baitFiles`, `decoys.routes` | `true`, `false`, `true`, `true` | Protect mode features |
+| `decoys.html`, `decoys.json`, `decoys.forms`, `decoys.baitFiles`, `decoys.routes` | `true`, `false`, `false`, `true`, `true` | Protect mode features |
 | `decoys.reservedPaths`, `decoys.reservedNames` | `[]` | Real paths and names that decoys must avoid |
 | `tarpit` | `false` | `true` or `{ minMs, maxMs }` |
 | `thresholds` | `{ suspicious: 30, flagged: 70 }` | |

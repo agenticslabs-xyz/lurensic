@@ -38,10 +38,10 @@ app.use(kagami());            // observe mode by default
 
 | An attacking agent will... | Kagami's tripwire | Why instructions don't help |
 |---|---|---|
-| probe for `.env`, `.git/config`, `.aws/credentials` | Serves convincing fake files full of **honeytokens** bound to that session | Trying found credentials is the reason to look for them. Use them anywhere on your site and the session is flagged and traced back, even after an IP change. |
-| read page source for leaked endpoints and keys | Per-session HTML comments leading to a **decoy API** with endless fake data | The leak looks like any real leak. Route names are derived from your secret, so there is no global list to avoid. |
+| probe for `.env`, `.git/config`, `.aws/credentials` | Serves short, ordinary fake files whose credentials are **honeytokens** bound to that machine | Trying found credentials is the reason to look for them. Use them anywhere on your site and the session is flagged and traced back, even after an IP change. |
+| read page source for leaked endpoints and keys | An HTML comment on the home page and some other pages, leading to a **decoy API** that answers errors in your app's own format and serves endless fake data | The leak looks like any real leak. Route names are derived from your secret, so there is no global list to avoid. |
 | test IDOR by changing IDs | **Sealed values**, where each ID carries an HMAC the client can't forge | Knowing exactly how it works doesn't help without the secret. The only way to avoid it is to stop testing IDOR. |
-| test mass assignment with privileged-looking fields | A **decoy field** in JSON responses that honest clients send back unchanged | Changing it is the attack, and honest round trips are ignored. |
+| test mass assignment with privileged-looking fields | A **decoy field** in JSON responses and, if you enable it, as a hidden input in POST forms. Honest clients send it back unchanged | Changing it is the attack, and honest round trips are ignored. |
 | spray payloads and wordlists | Payload, enumeration and brute-force **signals** add up to a session score | These are the behaviours that define an attack. |
 
 Once a session sets off a tripwire, everything it does is linked to it, and you get one alert with the whole timeline.
@@ -76,7 +76,7 @@ Watch the events, which go to stdout as JSON lines by default. Then switch on de
 ```js
 app.use(kagami({
   mode: 'protect',                   // or KAGAMI_MODE=protect
-  decoys: { json: true },            // opt in to a decoy field in JSON responses
+  decoys: { json: true, forms: true }, // opt in to a decoy field in JSON responses and POST forms
   ignorePaths: ['/healthz', '/static'],
   sinks: [
     consoleSink(),
@@ -113,7 +113,7 @@ Set `KAGAMI_DISABLED=1` to switch Kagami off.
   "source": { "ip": "192.0.2.77", "user_agent": "python-httpx/0.27" },
   "request": { "method": "POST", "host": "shop.example.com", "path": "/login", "query": "" },
   "evidence": {
-    "token_kind": "env_admin_password",
+    "token_kind": "env_smtp_password",
     "token": "aB3c…xYz9",
     "issued_to_source": "9f2e40aa",
     "cross_source": true

@@ -76,7 +76,10 @@ test('protect mode serves bait files and adds HTML and JSON decoys', async () =>
   try {
     const env = await fetchRaw(app.base, '/.env');
     assert.equal(env.status, 200);
-    assert.match(env.body, /^AWS_ACCESS_KEY_ID=AKIA[A-Z2-7]{16}$/m);
+    assert.match(env.body, /^NODE_ENV=production$/m);
+    assert.match(env.body, /^(SMTP_PASS=|STRIPE_SECRET_KEY=sk_live_|DATABASE_URL=postgres:\/\/[^:]+:)[A-Za-z0-9]{24}/m);
+    const aws = await fetchRaw(app.base, '/.aws/credentials');
+    assert.match(aws.body, /^aws_access_key_id = AKIA[A-Z2-7]{16}$/m);
     assert.equal(env.headers['x-powered-by'], 'Express', 'bait goes through the app like any response (no Kagami fingerprint)');
 
     const home = await fetchRaw(app.base, '/');
@@ -188,5 +191,55 @@ test('protect mode answers decoy routes even when the body is malformed', async 
     assert.match(res.body, /unauthorized/);
   } finally {
     await app.close();
+  }
+});
+
+// Regression tests from the second live benchmark round (2026-11-15).
+
+test('decoy routes answer 401 with the body the app uses for its own 401s', async () => {
+  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
+  const app = express();
+  app.use(mw);
+  app.get('/api/account', (_req, res) => res.status(401).json({ message: 'Login required', status: 401 }));
+  const server = await listen(app);
+  try {
+    const route = mw.kagami.manifest().decoys.routes[0];
+    const before = await fetchRaw(server.base, route);
+    assert.equal(before.body, '{"error":"unauthorized"}');
+    assert.equal((await fetchRaw(server.base, '/api/account')).status, 401);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(mw.kagami.wants401Body, false);
+    const after = await fetchRaw(server.base, route);
+    assert.equal(after.status, 401);
+    assert.equal(after.body, '{"message":"Login required","status":401}');
+    assert.equal(after.headers['content-type'], 'application/json; charset=utf-8');
+  } finally {
+    await server.close();
+  }
+});
+
+test('form decoys add a hidden field to POST forms and catch an edited value', async () => {
+  const mem = memorySink();
+  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { forms: true }, sinks: [mem], logger: quiet });
+  const app = express();
+  app.use(express.urlencoded({ extended: false }));
+  app.use(mw);
+  const page = '<!doctype html><html><body><form method="post" action="/signup"><input name="email"></form><form action="/search"></form></body></html>';
+  app.get('/signup', (_req, res) => res.type('html').send(page));
+  app.post('/signup', (_req, res) => res.status(201).send('ok'));
+  const server = await listen(app);
+  try {
+    const html = (await fetchRaw(server.base, '/signup')).body;
+    const [, name, value] = /<input type="hidden" name="([^"]+)" value="([^"]+)">/.exec(html);
+    assert.equal(html.match(/type="hidden"/g).length, 1, 'only the POST form gets the field');
+    const post = (body, ua) =>
+      fetchRaw(server.base, '/signup', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': ua }, body });
+    await post(`${name}=${value}&email=a%40b.c`, 'browser');
+    await post(`${name}=admin&email=a%40b.c`, 'agent');
+    await mw.kagami.flush();
+    const hits = mem.events.filter((e) => e.rule === 'decoy.param');
+    assert.deepEqual(hits.map((e) => e.source.user_agent), ['agent'], 'only the edited value is a detection');
+  } finally {
+    await server.close();
   }
 });

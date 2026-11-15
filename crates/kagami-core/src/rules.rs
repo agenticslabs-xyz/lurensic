@@ -335,6 +335,18 @@ rule!(
     false,
     []
 );
+rule!(
+    ABSOLUTE_TARGET,
+    "request.absolute_target",
+    "Absolute URL as request target",
+    "detection",
+    Low,
+    Medium,
+    20,
+    5,
+    false,
+    []
+);
 
 // Lifecycle
 rule!(

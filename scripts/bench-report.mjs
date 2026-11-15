@@ -7,11 +7,20 @@
 // Before publishing, every file is checked against the words listed in
 // .bench-private-words (one per line, git-ignored). Publishing stops if any
 // of them appear, so private names never reach the public repository.
+//
+// An optional harness.json in the round folder adds the attacker's side of
+// the round, which Kagami cannot see. All fields are optional.
+//   {
+//     "harness": "ARTEX",
+//     "findings": { "decoy": 0, "real": 1, "kagami_artefact": 0 },
+//     "llm_calls": 205, "input_tokens": 5881433, "output_tokens": 240257,
+//     "notes": "Free text about how the attacker treated the decoys."
+//   }
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { verifyChain } from '../packages/node/dist/index.js';
+import { Kagami, verifyChain } from '../packages/node/dist/index.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { values, positionals } = parseArgs({
@@ -82,6 +91,7 @@ function note(e) {
   if (e.rule === 'honeytoken.used') return `${ev.token_kind} issued to source ${ev.issued_to_source ?? ev.issued_to_session}`;
   if (e.rule === 'client.forged_forwarding') return `${ev.header} set to ${ev.snippet}`;
   if (e.rule === 'request.malformed_body') return `parser error ${ev.error}`;
+  if (e.rule === 'request.absolute_target') return `request target starts with ${ev.snippet}`;
   if (e.rule === 'session.flagged' && ev.linked_from_session) return `linked by a honeytoken used in session ${String(ev.linked_from_session).slice(0, 8)}`;
   if (e.rule === 'session.flagged') return `score ${e.session?.score}`;
   if (ev.param) return `parameter ${ev.param} in ${ev.location}`;
@@ -123,7 +133,7 @@ for (const s of sessions.values()) {
     timeline: s.events
       .filter((e) => e.kind === 'detection' || e.rule === 'session.flagged')
       .map((e) => ({ after: ms(e.ts) - firstSeen, rule: e.rule, severity: e.severity, path: e.request?.path ?? '', note: note(e) })),
-    crossSession: detections.some((e) => e.rule === 'honeytoken.used' && e.evidence?.cross_session),
+    crossSession: detections.some((e) => e.rule === 'honeytoken.used' && (e.evidence?.cross_source ?? e.evidence?.cross_session)),
   });
 }
 const detected = rows.filter((r) => r.detected || r.flagged).sort((a, b) => a.firstSeen - b.firstSeen);
@@ -152,6 +162,116 @@ for (const e of events.filter((e) => e.kind === 'detection')) {
 const honeytokens = events.filter((e) => e.rule === 'honeytoken.used');
 const decoyHits = access.filter((a) => events.some((e) => e.rule === 'decoy.route' && e.request?.path === a.path)).length;
 
+// ---------- deception engagement ----------
+//
+// Which requests went to Kagami's decoys, and how much of the attacker's
+// time they took. Decoy names are derived from the round's secret, so they
+// are recomputed here from .kagami-secret, which never leaves the round folder.
+
+async function loadDecoys() {
+  const file = join(runDir, '.kagami-secret');
+  if (!existsSync(file)) return null;
+  const k = new Kagami({ secret: readFileSync(file, 'utf8').trim(), mode: 'observe', sinks: [], logger: { warn() {} } });
+  const decoys = k.manifest()?.decoys ?? null;
+  await k.close();
+  return decoys;
+}
+const decoys = await loadDecoys();
+
+const BAIT_FILE = /^\/(\.env(\..*)?|\.git\/config|\.aws\/credentials)$/;
+const DECOY_KINDS = {
+  honeytoken: 'Planted credential used',
+  decoy_route: 'Decoy routes',
+  bait_file: 'Fake secret files',
+  decoy_field: 'Decoy field sent with a changed value',
+  decoy_param: 'Decoy debug parameter',
+};
+const decode = (s) => {
+  try {
+    return decodeURIComponent(s.replace(/\+/g, ' '));
+  } catch {
+    return s;
+  }
+};
+// Absolute-form targets (`http://host/path`) are routed on the path alone.
+const normPath = (p) => decode(p.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '') || '/').toLowerCase().replace(/\\/g, '/').replace(/\/+/g, '/').replace(/(.)\/$/, '$1');
+const queryNames = (q) =>
+  (q ? q.split('&') : []).map((pair) => decode(pair.split('=')[0]).toLowerCase().replace(/\]+$/, '').split(/[[.]/).pop());
+
+function decoyKind(a) {
+  const p = normPath(a.path);
+  const rules = a.kagami?.rules;
+  if (rules?.includes('honeytoken.used')) return 'honeytoken';
+  if (rules?.includes('decoy.route') || decoys?.routes?.includes(p)) return 'decoy_route';
+  if (run.mode === 'protect' && a.status === 200 && BAIT_FILE.test(p)) return 'bait_file';
+  // Rounds from 2026-11-16 on log the rules each request matched, which
+  // covers decoy fields sent in a request body. Older rounds fall back to
+  // matching decoy names in the query string.
+  if (rules) return rules.includes('decoy.param') ? 'decoy_field' : null;
+  const names = decoys ? queryNames(a.query) : [];
+  if (names.includes(decoys?.json_field)) return 'decoy_field';
+  if (names.includes(decoys?.debug_param)) return 'decoy_param';
+  return null;
+}
+
+// Time spent on a decoy request is the gap since the previous request from
+// the same source, capped at one minute. That gap is when the agent decided
+// to send it. Bodies are not logged, so decoy fields sent in a body are only
+// visible as `decoy.param` events and are not counted here.
+const GAP_CAP_MS = 60_000;
+const lastBySource = new Map();
+const engagement = { requests: 0, time_ms: 0, first_ms: null, last_ms: null, by_kind: {} };
+for (const a of [...access].sort((x, y) => arrived(x) - arrived(y))) {
+  const src = a.kagami?.source ?? a.ip;
+  const t = arrived(a);
+  const prev = lastBySource.get(src);
+  lastBySource.set(src, t);
+  const kind = decoyKind(a);
+  if (!kind) continue;
+  engagement.requests++;
+  engagement.by_kind[kind] = (engagement.by_kind[kind] ?? 0) + 1;
+  engagement.time_ms += prev === undefined ? 0 : Math.min(GAP_CAP_MS, Math.max(0, t - prev));
+  engagement.first_ms ??= t - start;
+  engagement.last_ms = t - start;
+}
+
+// Deception touchpoints. Each row counts the sessions that touched it and
+// when the first touch happened in the round.
+const TOUCHPOINTS = [
+  ['honeytoken.used', 'Used a planted credential'],
+  ['decoy.param', 'Sent a decoy field or parameter'],
+  ['tamper.sealed_value', 'Tampered with a sealed value'],
+  ['decoy.route', 'Requested a decoy route'],
+  ['bait.path', 'Probed a sensitive file path'],
+];
+const touchpoints = TOUCHPOINTS.map(([rule, label]) => {
+  const hits = events.filter((e) => e.rule === rule);
+  return { rule, label, sessions: new Set(hits.map((e) => e.session?.id)).size, first_ms: hits.length ? ms(hits[0].ts) - start : null };
+});
+
+const harnessFile = join(runDir, 'harness.json');
+const harness = existsSync(harnessFile) ? JSON.parse(readFileSync(harnessFile, 'utf8')) : null;
+let attacker = null;
+if (harness) {
+  const f = harness.findings ?? {};
+  const [decoy, real, artefact] = [f.decoy ?? 0, f.real ?? 0, f.kagami_artefact ?? 0];
+  const total = decoy + real + artefact;
+  attacker = {
+    harness: harness.harness ?? null,
+    findings_total: total,
+    findings_decoy: decoy,
+    findings_real: real,
+    findings_kagami_artefact: artefact,
+    deception_yield: total ? decoy / total : null,
+    llm_calls: harness.llm_calls ?? null,
+    input_tokens: harness.input_tokens ?? null,
+    output_tokens: harness.output_tokens ?? null,
+    input_tokens_per_real_finding: real && harness.input_tokens ? Math.round(harness.input_tokens / real) : null,
+    requests_per_real_finding: real ? Math.round(access.length / real) : null,
+    notes: harness.notes ?? null,
+  };
+}
+
 const summary = {
   label: run.label,
   kagami_version: run.kagami_version,
@@ -169,6 +289,9 @@ const summary = {
   sources_flagged: sourceRows.filter((g) => g.flagged > 0).length,
   honeytokens_used: honeytokens.length,
   decoy_route_requests: decoyHits,
+  decoy_engagement: decoys ? { ...engagement, share: access.length ? engagement.requests / access.length : 0 } : null,
+  touchpoints: touchpoints.map(({ label, ...t }) => t),
+  attacker,
   fastest_tripwire_ms: Math.min(...detected.filter((r) => r.firstTripwire).map((r) => r.firstTripwire.after)),
   fastest_flag_ms: Math.min(...detected.filter((r) => r.flaggedAt).map((r) => r.flaggedAt.after)),
   sources_detail: sourceRows.map((g) => ({ ...g, firstDetection: Number.isFinite(g.firstDetection) ? g.firstDetection - start : null })),
@@ -196,11 +319,55 @@ md.push(`| Sessions seen | ${rows.length} |`);
 md.push(`| Sessions with detections | ${detected.length} |`);
 md.push(`| Sessions flagged as attackers | ${summary.sessions_flagged} |`);
 md.push(`| Sessions with no detections | ${quiet.length} |`);
-md.push(`| Honeytokens used | ${honeytokens.length}${honeytokens.some((e) => e.evidence?.cross_session) ? ', including use from a different session than the one they were issued to' : ''} |`);
+md.push(`| Honeytokens used | ${honeytokens.length}${honeytokens.some((e) => e.evidence?.cross_source ?? e.evidence?.cross_session) ? ', including use from a different machine than the one they were issued to' : ''} |`);
 md.push(`| Requests to decoy routes | ${decoyHits} |`);
 md.push(`| Fastest first tripwire | ${Number.isFinite(summary.fastest_tripwire_ms) ? duration(summary.fastest_tripwire_ms) : 'none'} |`);
 md.push(`| Fastest flag | ${Number.isFinite(summary.fastest_flag_ms) ? duration(summary.fastest_flag_ms) : 'none'} |`);
 md.push('');
+
+const pct = (x) => `${(x * 100).toFixed(1)} %`;
+const num = (x) => (x == null ? 'n/a' : Number(x).toLocaleString('en-US'));
+
+if (attacker) {
+  md.push('## Attacker outcome', '');
+  md.push(`These numbers come from the attacking harness${attacker.harness ? ` (${cell(attacker.harness)})` : ''} and not from Kagami.`, '');
+  md.push('| Measure | Value |', '|---|---|');
+  md.push(`| Findings reported | ${attacker.findings_total} |`);
+  md.push(`| Findings caused by Kagami decoys | ${attacker.findings_decoy} |`);
+  md.push(`| Real findings | ${attacker.findings_real} |`);
+  if (attacker.findings_kagami_artefact) md.push(`| Findings about Kagami itself | ${attacker.findings_kagami_artefact} |`);
+  md.push(`| Deception yield (decoy findings out of all findings) | ${attacker.deception_yield == null ? 'n/a' : pct(attacker.deception_yield)} |`);
+  md.push(`| LLM calls | ${num(attacker.llm_calls)} |`);
+  md.push(`| Input tokens | ${num(attacker.input_tokens)} |`);
+  md.push(`| Output tokens | ${num(attacker.output_tokens)} |`);
+  md.push(`| Input tokens per real finding | ${attacker.findings_real ? num(attacker.input_tokens_per_real_finding) : 'no real findings'} |`);
+  md.push(`| Requests per real finding | ${attacker.findings_real ? num(attacker.requests_per_real_finding) : 'no real findings'} |`);
+  md.push('');
+  if (attacker.notes) md.push(String(attacker.notes).replace(/[\r\n]+/g, ' '), '');
+}
+
+md.push('## Deception touchpoints', '');
+md.push('A deceptive defence works even when the attacker reports nothing from it, as long as the attacker touches the decoys and spends time on them.', '');
+md.push('| Touchpoint | Rule | Sessions | First touch |', '|---|---|---|---|');
+for (const t of touchpoints) md.push(`| ${t.label} | \`${t.rule}\` | ${t.sessions} | ${t.first_ms == null ? 'none' : `${duration(t.first_ms)} into the round`} |`);
+md.push('');
+if (decoys) {
+  md.push('| Requests aimed at decoys | Value |', '|---|---|');
+  md.push(`| All decoy requests | ${engagement.requests} of ${access.length} (${pct(access.length ? engagement.requests / access.length : 0)}) |`);
+  for (const [kind, label] of Object.entries(DECOY_KINDS)) md.push(`| ${label} | ${engagement.by_kind[kind] ?? 0} |`);
+  md.push(`| Attacker time on decoy requests | ${duration(engagement.time_ms)} |`);
+  md.push(
+    `| First and last decoy request | ${engagement.first_ms == null ? 'none' : `${duration(engagement.first_ms)} and ${duration(engagement.last_ms)} into the round`} |`,
+  );
+  md.push('');
+  md.push(
+    'Time on a decoy request is the gap since the previous request from the same machine, capped at one minute. ' +
+      (access.some((a) => a.kagami?.rules)
+        ? 'Decoy fields are counted from the rules Kagami matched on each request, so fields sent in a request body are included.'
+        : 'This round was recorded before per-request rules were logged. Request bodies are not logged, so decoy fields sent in a body show up only as `decoy.param` events above.'),
+    '',
+  );
+}
 
 if (sourceRows.length) {
   md.push('## Sources', '');
@@ -215,18 +382,34 @@ if (sourceRows.length) {
 }
 
 if (detected.length) {
+  // Keep the report readable when an attacker spreads over many sessions.
+  // The busiest sessions are shown, in the order they appeared, and every
+  // session is still listed in report.json.
+  const MAX_SESSIONS = 25;
+  const MAX_TIMELINES = 10;
+  const busiest = [...detected].sort((a, b) => b.requests - a.requests);
+  const shown = busiest.slice(0, MAX_SESSIONS).sort((a, b) => a.firstSeen - b.firstSeen);
+  const rest = busiest.slice(MAX_SESSIONS);
   md.push('## Sessions with detections', '');
+  if (rest.length) md.push(`The ${MAX_SESSIONS} busiest of ${detected.length} sessions are shown.`, '');
   md.push('| Session | Source | Client | Requests | First detection | First tripwire | Flagged | Highest severity |', '|---|---|---|---|---|---|---|---|');
-  for (const r of detected) {
+  for (const r of shown) {
     const at = (x) => (x ? `${duration(x.after)} (request ${x.request})` : 'no');
     md.push(
       `| \`${r.id.slice(0, 8)}\` | ${cell(r.ip)} | ${cell(r.client)} | ${r.requests} | ${r.firstDetection ? `${at(r.firstDetection)}, \`${r.firstDetection.rule}\`` : 'no'} | ${r.firstTripwire ? `${at(r.firstTripwire)}, \`${r.firstTripwire.rule}\`` : 'no'} | ${at(r.flaggedAt)} | ${r.maxSeverity} |`,
     );
   }
+  if (rest.length) {
+    const sum = (f) => rest.filter(f).length;
+    md.push(
+      `| ${rest.length} more | | | ${rest.reduce((n, r) => n + r.requests, 0)} | ${rest.length} | ${sum((r) => r.firstTripwire)} | ${sum((r) => r.flaggedAt)} | |`,
+    );
+  }
   md.push('');
 
   md.push('## Detection timelines', '');
-  for (const r of detected) {
+  if (detected.length > MAX_TIMELINES) md.push(`Timelines for the ${MAX_TIMELINES} busiest sessions.`, '');
+  for (const r of busiest.slice(0, MAX_TIMELINES).sort((a, b) => a.firstSeen - b.firstSeen)) {
     md.push(`### Session \`${r.id.slice(0, 8)}\``, '');
     md.push('| Time after first request | Rule | Severity | Path | Note |', '|---|---|---|---|---|');
     for (const t of r.timeline) md.push(`| ${duration(t.after)} | \`${t.rule}\` | ${t.severity} | \`${cell(t.path)}\` | ${cell(t.note)} |`);
@@ -245,6 +428,7 @@ md.push('## Files', '');
 md.push('- `kagami-events.jsonl` holds every Kagami event. Verify it with `npx @agenticslabs/kagami verify-log kagami-events.jsonl`.');
 md.push('- `access.jsonl` holds every request the demo served, without bodies, cookies or header values other than the user agent.');
 md.push('- `run.json` holds the round settings and timing.');
+if (harness) md.push('- `harness.json` holds the attacking harness results, entered by the person who ran the round.');
 md.push('- `report.json` holds the numbers in this report in machine-readable form.', '');
 
 const reportMd = md.join('\n');
@@ -263,7 +447,7 @@ if (values.publish) {
   const words = existsSync(privateFile)
     ? readFileSync(privateFile, 'utf8').split('\n').map((w) => w.trim().toLowerCase()).filter((w) => w && !w.startsWith('#'))
     : [];
-  const files = ['report.md', 'report.json', 'run.json', 'kagami-events.jsonl', 'access.jsonl'].filter((f) => existsSync(join(runDir, f)));
+  const files = ['report.md', 'report.json', 'run.json', 'harness.json', 'kagami-events.jsonl', 'access.jsonl'].filter((f) => existsSync(join(runDir, f)));
   const leaks = [];
   for (const f of files) {
     const text = readFileSync(join(runDir, f), 'utf8').toLowerCase();

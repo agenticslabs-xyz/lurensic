@@ -37,6 +37,10 @@ struct InitArgs {
 struct DecorateArgs {
     #[serde(default)]
     session: String,
+    /// Request path of the page being decorated. It selects the pages that
+    /// carry the bait comment.
+    #[serde(default)]
+    path: String,
     body: String,
 }
 
@@ -100,7 +104,7 @@ impl Runtime {
             "response" => json!(engine.response(&parse::<Request>(env.args)?)),
             "decorate_html" => {
                 let a: DecorateArgs = parse(env.args)?;
-                json!({"body": engine.decorate_html(&a.session, &a.body)})
+                json!({"body": engine.decorate_html(&a.session, &a.path, &a.body)})
             }
             "decorate_json" => {
                 let a: DecorateArgs = parse(env.args)?;

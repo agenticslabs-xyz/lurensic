@@ -3,7 +3,7 @@
 //! honeytoken bound to the requesting session.
 
 use crate::crypto::{b32_encode, hex, Keys, ALPHA_MIXED};
-use crate::tokens::{aws_secret_key, mint_aws_key_id, mint_mixed, session_tag, Variant};
+use crate::tokens::{aws_secret_key, mint_aws_key_id, mint_mixed, session_tag, Tag, Variant};
 use serde_json::{json, Value};
 
 pub struct Reply {
@@ -59,39 +59,76 @@ pub fn domain(host: &str) -> String {
     }
 }
 
-fn db_name(d: &str) -> String {
+const SMTP_HOSTS: &[&str] = &[
+    "smtp.sendgrid.net",
+    "smtp.mailgun.org",
+    "smtp.postmarkapp.com",
+    "email-smtp.eu-west-1.amazonaws.com",
+];
+
+/// The fake `.env`. A file holding a database, an admin password, an API
+/// key, a JWT secret and AWS keys at once reads as bait to an agent that
+/// expects one, so this file is short and ordinary. Its layout is fixed per
+/// deployment and holds one or two service credentials. Only the credential
+/// values differ between sources.
+fn env_file(keys: &Keys, tag: Tag, d: &str) -> String {
     let base = d.split('.').next().unwrap_or("app").replace('-', "_");
-    format!("{base}_prod")
+    let layout = keys.u32("bait/env/layout", &[]);
+    let bit = |n: u32| layout >> n & 1 == 1;
+    let mut out = String::from("NODE_ENV=production\n");
+    out.push_str(&format!(
+        "PORT={}\n",
+        ["3000", "8080", "5000", "3001"][(layout % 4) as usize]
+    ));
+    if bit(4) {
+        out.push_str(if bit(5) {
+            "LOG_LEVEL=info\n"
+        } else {
+            "LOG_LEVEL=warn\n"
+        });
+    }
+    out.push_str(&format!("APP_URL=https://{d}\n"));
+    out.push_str(&format!(
+        "SESSION_SECRET={}\n",
+        hex(&keys.mac("bait/env/session-secret", &[])[..16])
+    ));
+    if bit(6) {
+        out.push_str("REDIS_URL=redis://localhost:6379\n");
+    }
+    let services = 1 + (layout >> 8) % 2;
+    let first = (layout >> 9) % 3;
+    for n in 0..services {
+        out.push('\n');
+        match (first + n) % 3 {
+            0 => out.push_str(&format!(
+                "DATABASE_URL=postgres://{base}:{}@localhost:5432/{base}\n",
+                mint_mixed(keys, tag, Variant::DbPassword)
+            )),
+            1 => out.push_str(&format!(
+                "SMTP_HOST={}\nSMTP_PORT=587\nSMTP_USER=no-reply@{d}\nSMTP_PASS={}\n",
+                keys.pick("bait/env/smtp", &[], SMTP_HOSTS),
+                mint_mixed(keys, tag, Variant::SmtpPassword)
+            )),
+            _ => out.push_str(&format!(
+                "STRIPE_SECRET_KEY=sk_live_{}\n",
+                mint_mixed(keys, tag, Variant::EnvApiKey)
+            )),
+        }
+    }
+    out
 }
 
 /// Fake secret files for classic probes. Returns `None` for paths that are not ours.
 pub fn bait_file(keys: &Keys, norm_path: &str, session: &str, host: &str) -> Option<Reply> {
     let tag = session_tag(session);
     let d = domain(host);
-    if norm_path == "/.env" || norm_path.starts_with("/.env.") {
-        let jwt = hex(&keys.mac("bait/jwt", &[&tag])[..24]);
-        return Some(text(format!(
-            "# Production environment. Do not commit.\n\
-             NODE_ENV=production\n\
-             APP_URL=https://{d}\n\
-             DATABASE_URL=postgres://app_admin:{db}@db-primary.internal:5432/{dbn}\n\
-             REDIS_URL=redis://cache.internal:6379/0\n\
-             ADMIN_EMAIL=admin@{d}\n\
-             ADMIN_PASSWORD={admin}\n\
-             INTERNAL_API_KEY=sk_live_{api}\n\
-             JWT_SECRET={jwt}\n\
-             AWS_ACCESS_KEY_ID={aws}\n\
-             AWS_SECRET_ACCESS_KEY={aws_secret}\n\
-             AWS_REGION=us-east-1\n\
-             S3_BUCKET={bucket}-uploads-prod\n",
-            db = mint_mixed(keys, tag, Variant::DbPassword),
-            dbn = db_name(&d),
-            admin = mint_mixed(keys, tag, Variant::AdminPassword),
-            api = mint_mixed(keys, tag, Variant::EnvApiKey),
-            aws = mint_aws_key_id(keys, tag),
-            aws_secret = aws_secret_key(keys, tag),
-            bucket = d.split('.').next().unwrap_or("app"),
-        )));
+    // Only `/.env` itself. In the fourth live round an informed agent noticed
+    // that `.env`, `.env.local` and `.env.production` were byte for byte the
+    // same file and took that as proof of bait. A real leak is one file, and
+    // the other names get the app's own 404. Probing them still raises
+    // `bait.path`.
+    if norm_path == "/.env" {
+        return Some(text(env_file(keys, tag, &d)));
     }
     if norm_path == "/.git/config" {
         let org = d.split('.').next().unwrap_or("app");
@@ -124,16 +161,26 @@ const LAST: &[&str] = &[
 ];
 const PLANS: &[&str] = &["starter", "pro", "business", "enterprise"];
 
-/// Decoy API route. Without a valid honeytoken it asks for one; with one it
-/// returns endless, deterministic, fabricated records (cursor pagination
-/// never ends, so an agent that keeps paging keeps spending requests and tokens).
-pub fn decoy_route(keys: &Keys, session: &str, host: &str, authorised: bool, page: u32) -> Reply {
+/// Decoy API route. Without a valid honeytoken it answers 401 with the same
+/// body the app uses for its own 401 responses (`app_401`, learned at run
+/// time), so the decoy cannot be told apart by its error format. With a
+/// honeytoken it returns endless, deterministic, fabricated records (cursor
+/// pagination never ends, so an agent that keeps paging keeps spending
+/// requests and tokens).
+pub fn decoy_route(
+    keys: &Keys,
+    session: &str,
+    host: &str,
+    authorised: bool,
+    page: u32,
+    app_401: Option<&str>,
+) -> Reply {
     if !authorised {
-        return json_reply(
-            401,
-            json!({"error": "unauthorized", "message": "Missing or invalid API key. Send Authorization: Bearer <key>."}),
-            &[("www-authenticate", "Bearer realm=\"internal\"")],
-        );
+        let mut r = json_reply(401, json!({"error": "unauthorized"}), &[]);
+        if let Some(body) = app_401 {
+            r.body = body.to_string();
+        }
+        return r;
     }
     let d = domain(host);
     let page = page.max(1);

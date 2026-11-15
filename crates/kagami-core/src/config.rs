@@ -66,10 +66,14 @@ impl Default for Thresholds {
 pub struct Config {
     pub secret: String,
     pub mode: Mode,
-    /// In protect mode, embed per-session bait comments in HTML documents.
+    /// In protect mode, embed a bait comment in the home page and a keyed
+    /// subset of other HTML documents.
     pub html_decoys: bool,
     /// In protect mode, add a decoy field to JSON object responses (opt-in).
     pub json_decoys: bool,
+    /// In protect mode, add the decoy field as a hidden input to POST forms in
+    /// HTML documents (opt-in, because the app then receives one extra field).
+    pub form_decoys: bool,
     /// In protect mode, answer probes for `.env`, `.git/config`, `.aws/credentials`
     /// with fake files containing honeytokens.
     pub bait_files: bool,
@@ -99,6 +103,7 @@ impl Default for Config {
             mode: Mode::Observe,
             html_decoys: true,
             json_decoys: false,
+            form_decoys: false,
             bait_files: true,
             decoy_routes: true,
             tarpit: Tarpit::default(),

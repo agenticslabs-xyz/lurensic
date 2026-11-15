@@ -108,8 +108,28 @@ pub fn for_match(s: &str) -> String {
     out
 }
 
+/// For an absolute-form request target such as `http://host:80/a/b`, the
+/// scheme and authority. Servers route these on the path alone, so Kagami
+/// must too, or every path rule and decoy can be skipped with one request.
+pub fn absolute_prefix(target: &str) -> Option<&str> {
+    let scheme_end = target.find("://")?;
+    let scheme = &target[..scheme_end];
+    if scheme.is_empty()
+        || !scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    {
+        return None;
+    }
+    let rest = &target[scheme_end + 3..];
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    Some(&target[..scheme_end + 3 + end])
+}
+
 /// Decoded, lowercased path used for route and bait matching.
 pub fn norm_path(path: &str) -> String {
+    let path = absolute_prefix(path).map_or(path, |p| &path[p.len()..]);
     let p = deep_decode(path).to_lowercase();
     let p = p.replace('\\', "/");
     let mut out = String::with_capacity(p.len());
@@ -175,7 +195,15 @@ pub fn extract(req: &Request) -> Vec<Param> {
     v.push(Param {
         loc: Loc::Path,
         name: String::new(),
-        value: cap(pct_decode(&req.path, false), MAX_VALUE),
+        // The scheme and host of an absolute-form target are not attacker
+        // payload in the path. `request.absolute_target` reports them.
+        value: cap(
+            pct_decode(
+                absolute_prefix(&req.path).map_or(&req.path[..], |p| &req.path[p.len()..]),
+                false,
+            ),
+            MAX_VALUE,
+        ),
     });
 
     let mut pairs = Vec::new();

@@ -12,7 +12,7 @@ const PRODUCTS = [
   { id: 4, name: 'Trailhead Merino Tee', price: 79, category: 'tops' },
   { id: 5, name: 'Coastal Canvas Tote', price: 49, category: 'accessories' },
 ];
-const USERS = new Map([['demo@northwind.test', { id: 101, name: 'Demo Customer', password: 'demo1234', role: 'customer' }]]);
+const USERS = new Map([['sam.taylor@northwind-outfitters.com', { id: 101, name: 'Sam Taylor', password: 'Ridgeline!2024', role: 'customer' }]]);
 const ORDERS = [
   { id: 5001, user: 101, total: 224, items: [1, 2] },
   { id: 5002, user: 101, total: 79, items: [4] },
@@ -46,7 +46,7 @@ function page(title, body, user) {
 <main>
 ${body}
 </main>
-<footer style="max-width:960px;margin:40px auto;padding:0 16px;color:#6b7280;font-size:13px">Demo store for security research. No real products, accounts or orders.</footer>
+<footer style="max-width:960px;margin:40px auto;padding:0 16px;color:#6b7280;font-size:13px"><a href="/about" style="color:inherit">About Northwind Outfitters</a></footer>
 </body>
 </html>`;
 }
@@ -110,7 +110,9 @@ export function createApp(kagamiOptions = {}, demo = {}) {
             ua: (req.get('user-agent') ?? '').slice(0, 512),
             header_order: names,
             http_version: req.httpVersion,
-            kagami: req.kagami ? { session: req.kagami.session, source: req.kagami.source, state: req.kagami.state, score: req.kagami.score } : null,
+            kagami: req.kagami
+              ? { session: req.kagami.session, source: req.kagami.source, state: req.kagami.state, score: req.kagami.score, rules: req.kagami.rules }
+              : null,
           }, req);
         } catch {
           /* research logging must never affect the app */
@@ -125,7 +127,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
 
   const guard = kagami({
     mode: 'protect',
-    decoys: { json: true, reservedNames: ['name', 'email', 'role'] },
+    decoys: { json: true, forms: true, reservedNames: ['name', 'email', 'role'] },
     ignorePaths: ['/healthz'],
     ...kagamiOptions,
   });
@@ -164,6 +166,18 @@ export function createApp(kagamiOptions = {}, demo = {}) {
         'Search',
         `<h1>Search</h1><form><input name="q" value="${esc(q)}"> <button>Search</button></form>` +
           (q ? `<p>${hits.length} result(s) for "${esc(q)}"</p><ul>${list}</ul>` : ''),
+        currentUser(req),
+      ),
+    );
+  });
+
+  // Nothing the shop serves says it is a demo. An agent that learns the
+  // target is a test site behaves differently, which would skew a round.
+  app.get('/about', (req, res) => {
+    res.send(
+      page(
+        'About',
+        '<h1>About us</h1><p>Northwind Outfitters makes outdoor clothing and accessories for wet and windy coastal weather. We started in 2016 with a single rain shell and now ship across the country.</p><p>Questions about an order? Sign in to see your order history.</p>',
         currentUser(req),
       ),
     );

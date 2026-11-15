@@ -26,6 +26,7 @@ pub enum Variant {
     DbPassword = 3,
     AdminPassword = 4,
     GitDeployPassword = 5,
+    SmtpPassword = 6,
 }
 
 impl Variant {
@@ -36,6 +37,7 @@ impl Variant {
             3 => Variant::DbPassword,
             4 => Variant::AdminPassword,
             5 => Variant::GitDeployPassword,
+            6 => Variant::SmtpPassword,
             _ => return None,
         })
     }
@@ -47,6 +49,7 @@ impl Variant {
             Variant::DbPassword => "env_database_password",
             Variant::AdminPassword => "env_admin_password",
             Variant::GitDeployPassword => "git_deploy_password",
+            Variant::SmtpPassword => "env_smtp_password",
         }
     }
 }
@@ -237,6 +240,7 @@ mod tests {
             Variant::DbPassword,
             Variant::AdminPassword,
             Variant::GitDeployPassword,
+            Variant::SmtpPassword,
         ]
         .into_iter()
         .map(|v| mint_mixed(&k, tag, v))
@@ -256,7 +260,7 @@ mod tests {
         // The same session tag still verifies from every one of them.
         let mut found = vec![];
         scan(&k, &tokens.join(" "), &mut found);
-        assert_eq!(found.len(), 5);
+        assert_eq!(found.len(), tokens.len());
         assert!(found.iter().all(|f| f.tag == tag));
     }
 
