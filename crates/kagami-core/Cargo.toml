@@ -1,0 +1,20 @@
+[package]
+name = "kagami-core"
+description = "Portable detection and deception engine for Kagami. Compiles to WebAssembly so every language adapter shares one implementation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"

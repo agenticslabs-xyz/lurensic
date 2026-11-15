@@ -1,0 +1,12 @@
+/target/
+node_modules/
+dist/
+packages/node/wasm/
+*.jsonl
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+bench-runs/
+.kagami-secret

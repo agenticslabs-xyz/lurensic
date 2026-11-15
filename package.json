@@ -1,0 +1,35 @@
+{
+  "name": "kagami-monorepo",
+  "private": true,
+  "description": "Kagami: deception-based defence against AI-driven attacks.",
+  "license": "Apache-2.0",
+  "author": "Agentics Labs (https://agenticslabs.xyz)",
+  "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agenticslabs-xyz/kagami.git"
+  },
+  "bugs": {
+    "url": "https://github.com/agenticslabs-xyz/kagami/issues"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.34.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "build": "pnpm build:wasm && pnpm -r --filter ./packages/** build",
+    "test:core": "cargo test",
+    "test:js": "pnpm -r --filter ./packages/** --filter ./examples/** test",
+    "test": "pnpm test:core && pnpm build && pnpm test:js",
+    "demo": "pnpm build && pnpm --filter demo-shop start",
+    "bench": "pnpm build && node scripts/bench-serve.mjs"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "express": "^5.1.0",
+    "typescript": "^5.7.0"
+  }
+}

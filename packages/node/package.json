@@ -1,0 +1,54 @@
+{
+  "name": "@agenticslabs/kagami",
+  "version": "0.1.0",
+  "description": "Kagami for Node.js: deception-based detection of AI-driven and automated attacks. Framework-agnostic engine, sinks and CLI.",
+  "license": "Apache-2.0",
+  "author": "Agentics Labs (https://agenticslabs.xyz)",
+  "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agenticslabs-xyz/kagami.git",
+    "directory": "packages/node"
+  },
+  "bugs": {
+    "url": "https://github.com/agenticslabs-xyz/kagami/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "kagami": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "wasm"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "security",
+    "deception",
+    "honeypot",
+    "honeytoken",
+    "ai-agents",
+    "waf",
+    "intrusion-detection"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
