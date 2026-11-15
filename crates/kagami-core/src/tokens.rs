@@ -5,14 +5,14 @@
 //! received it, even if it comes back from a different IP or user agent. No
 //! token database is needed, and tokens from another deployment never verify.
 //!
-//! Token layouts (all lengths are multiples of 5 bytes, so there are no padding
-//! characters to fingerprint):
-//! * AWS-style access key: `AKIA` + base32(mac[6] || mask(tag[4]))               (16 chars)
-//! * Mixed key/password:   base32m(mac[10] || mask(tag[4] || variant[1]))        (24 chars)
+//! All token lengths are multiples of 5 bytes, so the encoding never has
+//! padding characters that could fingerprint it. The layouts are as follows.
+//! * An AWS-style access key is `AKIA` + base32(mac[6] || mask(tag[4])), with 16 characters after the prefix.
+//! * A mixed key or password is base32m(mac[10] || mask(tag[4] || variant[1])), 24 characters long.
+//! * A seal is `value~` + base32m(mac(value)[10]), with 16 characters after the tilde.
 //!
-//! `mac = HMAC(secret, label, header)`; `mask` XORs the header with a keystream
-//! derived from the MAC, so no two tokens share visible structure.
-//! * Seal:                 `value~` + base32m(mac(value)[10])           (16 chars)
+//! Here `mac = HMAC(secret, label, header)` and `mask` XORs the header with a
+//! keystream derived from the MAC, so no two tokens share visible structure.
 
 use crate::crypto::{
     b32_decode, b32_encode, base64, ct_eq, hex, unhex, Keys, ALPHA_AWS, ALPHA_MIXED,
@@ -253,7 +253,7 @@ mod tests {
                 assert!(common_prefix < 3 && common_suffix < 3, "{a} vs {b}");
             }
         }
-        // ...and the same session tag still verifies from every one of them.
+        // The same session tag still verifies from every one of them.
         let mut found = vec![];
         scan(&k, &tokens.join(" "), &mut found);
         assert_eq!(found.len(), 5);

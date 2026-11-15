@@ -1,7 +1,7 @@
 {
   "name": "demo-shop",
   "private": true,
-  "description": "A small Express shop protected by Kagami. Point your pentest agent at it.",
+  "description": "A small Express shop protected by Kagami, used as a target for pentest agents.",
   "type": "module",
   "scripts": {
     "start": "node server.js",

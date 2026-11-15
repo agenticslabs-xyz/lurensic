@@ -1,15 +1,15 @@
 # Contributing to Kagami
 
-Thanks for helping. A few ground rules keep Kagami trustworthy.
+Thanks for helping. These rules keep Kagami trustworthy.
 
-## Non-negotiables
+## Requirements for every change
 
 1. **Fail open.** No code path may throw into, block, or crash the host application.
-2. **Observe mode is inert.** It must never change a response. The byte-identity test must keep passing.
-3. **No cooperation-based detection as a foundation.** Rules that need the attacker's agent to obey text are not accepted.
-4. **No hack-back.** Nothing that attacks, exploits or instructs the attacker's own systems.
-5. **One implementation.** Detection logic lives in `crates/kagami-core` only. Adapters translate, they don't decide.
-6. **Logs are hostile-input safe.** New event fields that carry attacker text must be sanitised and listed in `untrusted`.
+2. **Observe mode changes nothing.** It must never change a response. The byte-identity test must keep passing.
+3. **No detection that depends on cooperation.** Rules that need the attacker's agent to obey text are not accepted as a foundation.
+4. **No hack-back.** Nothing may attack, exploit or instruct the attacker's own systems.
+5. **One implementation.** Detection logic lives only in `crates/kagami-core`. Adapters translate requests and don't make decisions.
+6. **Logs are safe against hostile input.** New event fields that carry attacker text must be sanitised and listed in `untrusted`.
 
 ## Development
 
@@ -28,10 +28,10 @@ cargo clippy --all-targets -- -D warnings
 
 ## Adding a language adapter
 
-Implement the ABI in [docs/DESIGN.md §4.1](docs/DESIGN.md#41-core-abi-v1), map the framework's request,
-run the event pipeline off the request path, and reproduce the Express adapter's test suite (byte identity,
-fail-open, decoration, seals).
+Implement the ABI described in [section 4.1 of docs/DESIGN.md](docs/DESIGN.md#41-core-abi-v1), map the framework's
+request, run the event pipeline off the request path, and reproduce the Express adapter's test suite (byte identity,
+fail-open behaviour, decoration and seals).
 
 ## Commits
 
-Small, focused commits with clear messages. By contributing you agree your work is licensed under Apache-2.0.
+Keep commits small and focused, with clear messages. By contributing you agree your work is licensed under Apache-2.0.

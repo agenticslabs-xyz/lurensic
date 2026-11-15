@@ -3,8 +3,8 @@
  * Fastify, ...) translate their request objects into `HttpRequest` and call
  * `inspect` / `response` / `decorate*`.
  *
- * Fail-open is a hard rule: no public method throws, and any internal fault
- * degrades to "pass the request through untouched".
+ * Fail-open is a hard rule. No public method throws, and any internal fault
+ * results in the request passing through untouched.
  */
 import { randomBytes } from 'node:crypto';
 import { Core, KagamiCoreError } from './core.js';
@@ -96,14 +96,14 @@ export class Kagami {
     if (!secret) {
       if (process.env.NODE_ENV === 'production') {
         this.warn(
-          '[kagami] KAGAMI_SECRET is not set: Kagami is DISABLED and requests pass through untouched. ' +
+          '[kagami] KAGAMI_SECRET is not set, so Kagami is disabled and requests pass through untouched. ' +
             'Generate a secret with `npx @agenticslabs/kagami secret`.',
         );
         this.enabled = false;
         return;
       }
       secret = randomBytes(32).toString('hex');
-      this.warn('[kagami] No KAGAMI_SECRET set; using a temporary development secret (decoys change on every restart).');
+      this.warn('[kagami] No KAGAMI_SECRET set. Using a temporary development secret, so decoys change on every restart.');
     }
     this.coreConfig = buildCoreConfig(options, secret, this.mode);
     try {
@@ -111,7 +111,7 @@ export class Kagami {
     } catch (err) {
       this.enabled = false;
       const msg = err instanceof KagamiCoreError ? err.message : String(err);
-      this.warn(`[kagami] Disabled, requests pass through untouched: ${msg}`);
+      this.warn(`[kagami] Kagami is disabled and requests pass through untouched. ${msg}`);
     }
   }
 
@@ -127,14 +127,14 @@ export class Kagami {
     this.pipeline.push(res.events);
   }
 
-  /** Any unexpected error: record it, drop the (possibly poisoned) core, rebuild later. */
+  /** Records an unexpected error. After a trap the core is dropped and rebuilt later. */
   private fault(err: unknown): void {
     this.faults++;
     if (err instanceof WebAssembly.RuntimeError) this.core = null;
     const now = Date.now();
     if (now - this.lastFaultWarn > 60_000) {
       this.lastFaultWarn = now;
-      this.warn(`[kagami] internal error, request passed through untouched: ${(err as Error)?.message ?? err}`);
+      this.warn(`[kagami] Internal error. The request passed through untouched. ${(err as Error)?.message ?? err}`);
     }
   }
 
@@ -198,7 +198,7 @@ export class Kagami {
     }
   }
 
-  /** Report the response status (drives enumeration / brute-force detection). */
+  /** Report the response status. Enumeration and brute-force detection use it. */
   response(req: HttpRequest, status: number): void {
     const core = this.live();
     if (!core) return;
@@ -238,8 +238,8 @@ export class Kagami {
 
   /**
    * Seal a server-issued value (an ID, a price, a role) before handing it to a
-   * client. Seals are authenticated with the deployment secret: a client can
-   * read them but cannot change them. When Kagami is disabled the value is
+   * client. Seals are authenticated with the deployment secret, so a client
+   * can read them but cannot change them. When Kagami is disabled the value is
    * returned unchanged and `verify` accepts plain values.
    */
   seal(value: string | number): string {
@@ -272,8 +272,8 @@ export class Kagami {
   }
 
   /**
-   * Deployment manifest including decoy names. For local tooling and tests only:
-   * never expose it over HTTP.
+   * Deployment manifest including decoy names. It is for local tooling and
+   * tests only and must never be exposed over HTTP.
    */
   manifest(): Record<string, unknown> | null {
     const core = this.live();
@@ -303,7 +303,7 @@ export class Kagami {
     return this.pipeline.flush();
   }
 
-  /** Flush and close sinks (call on shutdown). */
+  /** Flush and close sinks. Call this on shutdown. */
   close(): Promise<void> {
     return this.pipeline.close();
   }

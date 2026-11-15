@@ -1,7 +1,7 @@
 //! Request normalisation and safe text handling.
 //!
-//! Everything an attacker controls is treated as hostile twice: once when we
-//! match against it (decode layers, collapse evasions) and once when we log it
+//! Everything an attacker controls is treated as hostile twice, once when it is
+//! matched (decode layers, collapse evasions) and once when it is logged
 //! (strip control and bidi characters, truncate, redact sensitive names).
 
 use crate::engine::Request;
@@ -88,8 +88,8 @@ pub fn deep_decode(s: &str) -> String {
     cur
 }
 
-/// Canonical form for pattern matching: decoded, lowercase, SQL inline
-/// comments removed, whitespace collapsed.
+/// Canonical form for pattern matching. The value is decoded and lowercased,
+/// SQL inline comments are removed and whitespace is collapsed.
 pub fn for_match(s: &str) -> String {
     let decoded = deep_decode(s).to_lowercase().replace("/**/", " ");
     let mut out = String::with_capacity(decoded.len());
@@ -329,8 +329,9 @@ fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}')
 }
 
-/// Make attacker-controlled text safe to log: no control characters (log
-/// forging, terminal escapes), no bidi overrides (display spoofing), bounded.
+/// Make attacker-controlled text safe to log. Control characters (log forging,
+/// terminal escapes) and bidi overrides (display spoofing) are replaced, and
+/// the length is bounded.
 pub fn sanitize(s: &str, max_chars: usize) -> String {
     let mut out = String::with_capacity(s.len().min(max_chars * 2));
     for (n, c) in s.chars().enumerate() {
@@ -347,7 +348,7 @@ pub fn sanitize(s: &str, max_chars: usize) -> String {
     out
 }
 
-/// Query string for logs: sensitive parameter values replaced.
+/// Query string for logs, with sensitive parameter values replaced.
 pub fn redacted_query(q: &str) -> String {
     let mut pairs = Vec::new();
     parse_pairs(q, &mut pairs);

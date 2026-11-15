@@ -1,10 +1,10 @@
-//! Audit events: structured, sanitised, rate limited and hash-chained.
+//! Audit events. They are structured, sanitised, rate limited and hash chained.
 //!
 //! Each event is serialised once, inside the core, and handed to the host as
 //! an opaque JSON line. Hosts must write the line verbatim. The `hash` field is
-//! always the last field: `hash = sha256(prev_hash || "\n" || body)`, where
-//! `body` is the line with `,"hash":"…"` removed. Any edit, deletion or
-//! reordering of a stored log breaks the chain (`verify_chain`).
+//! always the last field and equals `sha256(prev_hash || "\n" || body)`, where
+//! `body` is the line with its `,"hash":"..."` field removed. Any edit, deletion
+//! or reordering of a stored log breaks the chain, which `verify_chain` detects.
 
 use crate::config::Mode;
 use crate::crypto::sha256_hex;
@@ -116,7 +116,7 @@ impl EventLog {
     }
 
     /// Queue an event, enforcing the per-minute budget. Critical events have a
-    /// separate budget so a flood of noise can never crowd them out.
+    /// separate budget, so a large volume of lower-severity events cannot suppress them.
     pub fn push(&mut self, out: &mut Vec<String>, now_ms: u64, draft: Draft) {
         let minute = now_ms / 60_000;
         if minute != self.minute {

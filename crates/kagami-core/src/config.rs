@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 /// Operating mode.
 ///
-/// `Observe` is the default and is a hard guarantee: the engine never asks the
-/// host to change, delay or answer a response. It only produces events.
+/// `Observe` is the default. In this mode the engine never asks the host to
+/// change, delay or answer a response. It only produces events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
@@ -18,7 +18,7 @@ pub enum Mode {
 pub enum IpLogging {
     #[default]
     Raw,
-    /// Keyed hash: stable per deployment, not reversible without the secret.
+    /// Keyed hash that is stable per deployment and cannot be reversed without the secret.
     Hashed,
     Omit,
 }
@@ -60,20 +60,20 @@ impl Default for Thresholds {
 /// Engine configuration. Unknown fields are rejected so typos surface
 /// immediately instead of silently falling back to defaults.
 ///
-/// Deliberately not `Debug`: it holds the deployment secret.
+/// Deliberately not `Debug`, because it holds the deployment secret.
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub secret: String,
     pub mode: Mode,
-    /// Protect mode: embed per-session bait comments in HTML documents.
+    /// In protect mode, embed per-session bait comments in HTML documents.
     pub html_decoys: bool,
-    /// Protect mode: add a decoy field to JSON object responses (opt-in).
+    /// In protect mode, add a decoy field to JSON object responses (opt-in).
     pub json_decoys: bool,
-    /// Protect mode: answer probes for `.env`, `.git/config`, `.aws/credentials`
+    /// In protect mode, answer probes for `.env`, `.git/config`, `.aws/credentials`
     /// with fake files containing honeytokens.
     pub bait_files: bool,
-    /// Protect mode: answer the derived decoy routes.
+    /// In protect mode, answer the derived decoy routes.
     pub decoy_routes: bool,
     pub tarpit: Tarpit,
     pub thresholds: Thresholds,

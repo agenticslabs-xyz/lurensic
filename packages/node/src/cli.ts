@@ -3,10 +3,10 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { verifyChain } from './chain.js';
 
-const HELP = `kagami - deception-based defence against AI-driven attacks
+const HELP = `Kagami command line tool. Deception-based defence against AI-driven attacks.
 
-Usage:
-  kagami secret              Print a new random deployment secret (KAGAMI_SECRET)
+Commands
+  kagami secret              Print a new random deployment secret for KAGAMI_SECRET
   kagami verify-log <file>   Verify the hash chain of a Kagami JSON-lines event log
   kagami help                Show this help
 `;
@@ -20,14 +20,14 @@ switch (cmd) {
   case 'verify-log': {
     const file = args[0];
     if (!file) {
-      process.stderr.write('Usage: kagami verify-log <file>\n');
+      process.stderr.write('Give the log file to check, for example kagami verify-log kagami-events.jsonl\n');
       process.exit(2);
     }
     const res = verifyChain(readFileSync(file, 'utf8').split('\n'));
     if (res.ok) {
-      process.stdout.write(`OK: ${res.events} events across ${res.instances} instance(s), chain intact.\n`);
+      process.stdout.write(`Chain intact. Checked ${res.events} events across ${res.instances} instance(s).\n`);
     } else {
-      process.stdout.write(`TAMPERED: line ${res.line}: ${res.reason}\n`);
+      process.stdout.write(`Tampering detected at line ${res.line}. Reason is ${res.reason}.\n`);
       process.exit(1);
     }
     break;

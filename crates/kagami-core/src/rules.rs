@@ -1,12 +1,12 @@
 //! Detection rules.
 //!
-//! Two families:
-//! * **Tripwires** (honeytokens, decoy params/routes, seals): only an attacker
-//!   ever touches them, so they carry high confidence and flag instantly.
-//!   They work whether or not the attacking agent follows instructions.
-//! * **Signals** (payloads, bait paths, scanners, behaviour): evidence that
-//!   accumulates into a session score. One signal alone never flags a session
-//!   under the default thresholds, which keeps false positives low.
+//! There are two families of rules.
+//! * Tripwires (honeytokens, decoy params and routes, seals) are only ever
+//!   touched by an attacker, so they carry high confidence and flag a session
+//!   at once. They work whether or not the attacking agent follows instructions.
+//! * Signals (payloads, bait paths, scanners, behaviour) add evidence to a
+//!   session score. One signal alone never flags a session under the default
+//!   thresholds, which keeps false positives low.
 
 use crate::normalize::{for_match, Loc, Param};
 use serde::Serialize;
@@ -377,7 +377,7 @@ fn contains_word(hay: &str, pat: &str) -> bool {
 
 /// The set of bytes present in a value. A pattern that uses a byte the value
 /// does not contain cannot match, so almost every pattern is rejected without
-/// a substring search (ordinary values skip ~all of the table).
+/// a substring search (ordinary values skip nearly all of the table).
 struct ByteSet([u64; 4]);
 
 impl ByteSet {

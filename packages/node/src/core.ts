@@ -1,6 +1,7 @@
 /**
- * Bridge to the WebAssembly core (ABI v1). The module imports nothing: no
- * clock, randomness, filesystem or network. All I/O stays in this package.
+ * Bridge to the WebAssembly core (ABI v1). The module imports nothing, so it
+ * has no clock, randomness, filesystem or network access. All I/O stays in
+ * this package.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -8,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 const SUPPORTED_ABI = 1;
 
 /**
- * Locate the core module: `KAGAMI_WASM_PATH`, then the package layout
- * (`dist/../wasm/`), then next to the running file (single-file bundles).
+ * Locate the core module. Checks `KAGAMI_WASM_PATH` first, then the package
+ * layout (`dist/../wasm/`), then the folder of the running file (single-file
+ * bundles).
  */
 function wasmPath(): string {
   const candidates: string[] = [];
@@ -25,7 +27,7 @@ function wasmPath(): string {
   if (!found) {
     throw new KagamiCoreError(
       'wasm_missing',
-      `kagami_core.wasm not found (looked in: ${candidates.join(', ')}). Set KAGAMI_WASM_PATH to its location.`,
+      `kagami_core.wasm not found. Looked in ${candidates.join(', ')}. Set KAGAMI_WASM_PATH to its location.`,
     );
   }
   return found;
@@ -82,7 +84,7 @@ export class Core {
       try {
         ex.kagami_free(inPtr, input.length);
       } catch {
-        // instance is already poisoned by a trap; the caller rebuilds it
+        // A trap has already left the instance unusable. The caller rebuilds it.
       }
     }
     const outPtr = Number(packed >> 32n) >>> 0;

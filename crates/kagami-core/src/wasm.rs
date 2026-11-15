@@ -1,12 +1,13 @@
-//! WebAssembly host ABI (version 1). Four exports, no imports:
+//! WebAssembly host ABI, version 1. The module has four exports and no imports.
 //!
-//! * `kagami_abi_version() -> u32`
-//! * `kagami_alloc(len: usize) -> *mut u8`        host writes input here
-//! * `kagami_free(ptr: *mut u8, len: usize)`      host frees input and output
-//! * `kagami_call(ptr, len) -> u64`               JSON envelope in, JSON out;
-//!   returns `(out_ptr << 32) | out_len`
+//! * `kagami_abi_version() -> u32` returns the ABI version.
+//! * `kagami_alloc(len: usize) -> *mut u8` allocates a buffer for the host to write input into.
+//! * `kagami_free(ptr: *mut u8, len: usize)` frees input and output buffers.
+//! * `kagami_call(ptr, len) -> u64` takes a JSON envelope and returns a JSON
+//!   response packed as `(out_ptr << 32) | out_len`.
 //!
-//! The module imports nothing from the host: no clock, no randomness, no I/O.
+//! The module imports nothing from the host, so it has no clock, no randomness
+//! and no I/O.
 
 use crate::api::Runtime;
 use std::cell::RefCell;

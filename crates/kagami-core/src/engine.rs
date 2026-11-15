@@ -1,4 +1,4 @@
-//! The engine: request in, verdict + events out.
+//! The engine takes a request and returns a verdict and events.
 
 use crate::config::{Config, ConfigError, IpLogging, Mode};
 use crate::crypto::{hex, Keys};
@@ -443,7 +443,7 @@ impl Engine {
         (score, state)
     }
 
-    /// A honeytoken came back from a different session: the session it was
+    /// A honeytoken came back from a different session. The session it was
     /// issued to belongs to the same attacker, so flag it too.
     fn flag_linked(
         &mut self,
@@ -482,7 +482,7 @@ impl Engine {
         }
     }
 
-    /// Record the response status (behavioural signals: enumeration, brute force).
+    /// Record the response status, which drives the enumeration and brute force signals.
     pub fn response(&mut self, req: &Request) -> ResponseOutcome {
         let now = req.now_ms;
         let sid = self.session_id(&req.ip, req.user_agent());
@@ -587,7 +587,7 @@ impl Engine {
     }
 
     /// Deployment manifest for the host (dashboard, self-test). Contains decoy
-    /// names: hosts must never expose it publicly.
+    /// names, so hosts must never expose it publicly.
     pub fn manifest(&self) -> Value {
         json!({
             "version": crate::VERSION,

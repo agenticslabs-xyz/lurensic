@@ -5,8 +5,8 @@
  *   app.use(express.urlencoded({ extended: false }));
  *   app.use(kagami());          // reads KAGAMI_SECRET, starts in observe mode
  *
- * Mount it after the body parsers (so bodies are inspected) and before your
- * routes. Every code path fails open: if anything inside Kagami goes wrong,
+ * Mount it after the body parsers, so bodies are inspected, and before your
+ * routes. Every code path fails open. If anything inside Kagami goes wrong,
  * the request continues to your app untouched.
  */
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
@@ -44,7 +44,7 @@ export interface KagamiExpressOptions extends KagamiOptions {
    * How to find the real client IP. Defaults to Express's `req.ip` (configure
    * `app.set('trust proxy', ...)` for your proxy chain). Behind a CDN, use its
    * header, e.g. `(req) => req.get('cf-connecting-ip') ?? req.ip`.
-   * Getting this right matters: sessions are keyed on IP + user agent.
+   * Getting this right matters because sessions are keyed on IP and user agent.
    */
   clientIp?: (req: Request) => string | undefined;
 }

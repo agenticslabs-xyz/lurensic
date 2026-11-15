@@ -1,7 +1,7 @@
 {
   "name": "@agenticslabs/kagami",
   "version": "0.1.0",
-  "description": "Kagami for Node.js: deception-based detection of AI-driven and automated attacks. Framework-agnostic engine, sinks and CLI.",
+  "description": "Kagami for Node.js. A framework-agnostic engine, event sinks and CLI for deception-based detection of AI-driven and automated attacks.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
   "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",

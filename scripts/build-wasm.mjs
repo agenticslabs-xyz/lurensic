@@ -13,4 +13,4 @@ const src = join(root, 'target', 'wasm32-unknown-unknown', 'release', 'kagami_co
 const destDir = join(root, 'packages', 'node', 'wasm');
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, join(destDir, 'kagami_core.wasm'));
-console.log(`kagami_core.wasm: ${(statSync(src).size / 1024).toFixed(0)} KiB -> packages/node/wasm/`);
+console.log(`Copied kagami_core.wasm (${(statSync(src).size / 1024).toFixed(0)} KiB) to packages/node/wasm/`);

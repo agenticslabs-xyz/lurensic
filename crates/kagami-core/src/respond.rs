@@ -1,5 +1,5 @@
-//! Deceptive responses (protect mode only): fake secret files and decoy API
-//! routes. Everything returned is fabricated; every credential in it is a
+//! Deceptive responses for protect mode, namely fake secret files and decoy API
+//! routes. Everything returned is fabricated, and every credential in it is a
 //! honeytoken bound to the requesting session.
 
 use crate::crypto::{b32_encode, hex, Keys, ALPHA_MIXED};
@@ -64,7 +64,7 @@ fn db_name(d: &str) -> String {
     format!("{base}_prod")
 }
 
-/// Fake secret files for classic probes. `None` = not one of ours.
+/// Fake secret files for classic probes. Returns `None` for paths that are not ours.
 pub fn bait_file(keys: &Keys, norm_path: &str, session: &str, host: &str) -> Option<Reply> {
     let tag = session_tag(session);
     let d = domain(host);
@@ -126,7 +126,7 @@ const PLANS: &[&str] = &["starter", "pro", "business", "enterprise"];
 
 /// Decoy API route. Without a valid honeytoken it asks for one; with one it
 /// returns endless, deterministic, fabricated records (cursor pagination
-/// never ends, so an agent that keeps paging keeps paying).
+/// never ends, so an agent that keeps paging keeps spending requests and tokens).
 pub fn decoy_route(keys: &Keys, session: &str, host: &str, authorised: bool, page: u32) -> Reply {
     if !authorised {
         return json_reply(

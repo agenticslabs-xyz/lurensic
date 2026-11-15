@@ -182,7 +182,7 @@ fn bait_file_honeytoken_is_attributed_across_sessions() {
         .events
         .iter()
         .any(|ev| ev.contains("linked_from_session") && ev.contains(&probe.session)));
-    // No secret material reaches the log: the password is masked.
+    // No secret material reaches the log, because the password is masked.
     assert!(i.events.iter().all(|ev| !ev.contains(password)));
 }
 

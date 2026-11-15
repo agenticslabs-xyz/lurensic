@@ -1,4 +1,4 @@
-//! Keyed derivation helpers. Everything secret-dependent in Kagami flows
+//! Keyed derivation helpers. Everything secret-dependent in Kagami goes
 //! through `Keys::mac`, with a distinct label per purpose (domain separation).
 
 use hmac::{Hmac, Mac};

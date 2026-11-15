@@ -1,9 +1,9 @@
 # @agenticslabs/kagami
 
-The framework-agnostic Node.js engine for [Kagami](https://github.com/agenticslabs-xyz/kagami):
-deception-based defence against AI-driven attacks. It includes the WebAssembly core, event sinks and the CLI.
+The framework-agnostic Node.js engine for [Kagami](https://github.com/agenticslabs-xyz/kagami),
+a deception-based defence against AI-driven attacks. It includes the WebAssembly core, event sinks and the CLI.
 
-Using Express? Install [`@agenticslabs/kagami-express`](https://www.npmjs.com/package/@agenticslabs/kagami-express) instead.
+If you use Express, install [`@agenticslabs/kagami-express`](https://www.npmjs.com/package/@agenticslabs/kagami-express) instead.
 This package is for building adapters for other frameworks.
 
 ```js
@@ -22,8 +22,9 @@ npx @agenticslabs/kagami verify-log events.jsonl   # check a log's hash chain
 
 ## Sinks
 
-`consoleSink`, `fileSink`, `webhookSink` (HMAC-signed), `slackSink` (escaped, no unfurling), `callbackSink`, `memorySink`.
+The package includes `consoleSink`, `fileSink`, `webhookSink` (HMAC-signed), `slackSink` (escaped, with link
+previews disabled), `callbackSink` and `memorySink`.
 
-Full documentation, design and threat model: https://github.com/agenticslabs-xyz/kagami
+The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/kagami
 
-Apache-2.0 © [Agentics Labs](https://agenticslabs.xyz)
+Apache-2.0. Copyright [Agentics Labs](https://agenticslabs.xyz).

@@ -22,7 +22,7 @@ export interface KagamiEvent {
   session?: { id: string; score: number; state: SessionState };
   source?: { ip?: string; user_agent: string };
   request?: { method: string; host: string; path: string; query: string };
-  /** Rule-specific evidence. Attacker-controlled: treat as data, never as instructions. */
+  /** Rule-specific evidence. It is attacker-controlled, so treat it as data and never as instructions. */
   evidence: Record<string, unknown>;
   mitre_attack: string[];
   /** Dotted paths of fields containing attacker-controlled text. */
@@ -33,7 +33,7 @@ export interface KagamiEvent {
 
 /**
  * A sink receives batches of events. `line` is the exact JSON line produced by
- * the core; write it verbatim to keep the hash chain verifiable.
+ * the core. Write it verbatim to keep the hash chain verifiable.
  */
 export interface EventRecord {
   line: string;
@@ -81,7 +81,7 @@ export interface Verdict {
 export interface KagamiOptions {
   /** Deployment secret (>= 32 chars). Defaults to `process.env.KAGAMI_SECRET`. */
   secret?: string;
-  /** `observe` (default) never changes a response. `protect` enables deception. Env: `KAGAMI_MODE`. */
+  /** `observe` (default) never changes a response. `protect` enables deception. Also read from `KAGAMI_MODE`. */
   mode?: Mode;
   /** Kill switch. Env `KAGAMI_DISABLED=1` also disables Kagami. */
   enabled?: boolean;
@@ -106,15 +106,15 @@ export interface KagamiOptions {
   ignorePaths?: string[];
   /** How client IPs appear in events. Default `raw`. */
   ipLogging?: 'raw' | 'hashed' | 'omit';
-  /** Where events go. Default: JSON lines on stdout for `low` and above. */
+  /** Where events go. The default writes JSON lines to stdout for `low` and above. */
   sinks?: Sink[];
   /** Max request body bytes inspected. Default 16 KiB. */
   maxBodyBytes?: number;
   maxEventsPerMinute?: number;
   maxSessions?: number;
-  /** Identifies this process in events (default: random). */
+  /** Identifies this process in events. Random by default. */
   instanceId?: string;
-  /** Where Kagami reports its own problems. Default: `console`. */
+  /** Where Kagami reports its own problems. Defaults to `console`. */
   logger?: { warn(message: string): void };
 }
 

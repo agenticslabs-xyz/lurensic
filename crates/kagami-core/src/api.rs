@@ -1,11 +1,11 @@
 //! JSON envelope API shared by the WebAssembly ABI and native tests.
 //!
-//! Request:  `{"op": "<name>", "args": {...}}`
-//! Response: `{"ok": true, "result": ...}` or
-//!           `{"ok": false, "error": {"code": "...", "message": "..."}}`
+//! A request has the form `{"op": "<name>", "args": {...}}`. A response is
+//! either `{"ok": true, "result": ...}` or
+//! `{"ok": false, "error": {"code": "...", "message": "..."}}`.
 //!
 //! Using one envelope keeps the host ABI to four exported functions, so a new
-//! language adapter is a small amount of glue code.
+//! language adapter needs very little code.
 
 use crate::config::Config;
 use crate::engine::{Engine, Request};

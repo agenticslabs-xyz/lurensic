@@ -119,9 +119,9 @@ impl Store {
         self.map
             .retain(|_, s| now.saturating_sub(s.last_seen) <= ttl);
         if self.map.len() >= self.max {
-            // Drop the least recently seen 10%, but never evict flagged
-            // sessions before clean ones: attackers cannot flush their record
-            // by flooding new sessions.
+            // Drop the least recently seen 10%, but evict clean sessions before
+            // flagged ones, so an attacker cannot erase its own record by
+            // creating many new sessions.
             let mut order: Vec<(State, u64, String)> = self
                 .map
                 .iter()

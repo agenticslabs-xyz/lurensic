@@ -74,7 +74,7 @@ fn pick_name(keys: &Keys, label: &str, a: &[&str], b: &[&str], reserved: &[Strin
             return name;
         }
     }
-    // Every candidate reserved: fall back to an opaque but plausible name.
+    // Every candidate is reserved, so fall back to an opaque but plausible name.
     format!("x_{}", hex(&keys.mac(label, &[b"fallback"])[..3]))
 }
 

@@ -1,7 +1,7 @@
-// Northwind Outfitters: a deliberately ordinary web shop used to demonstrate
+// Northwind Outfitters is a deliberately ordinary web shop used to demonstrate
 // and benchmark Kagami. It has a login, a JSON API, a search page and order
-// IDs that are sealed with Kagami. It contains no real vulnerabilities; any
-// "finding" an attacking agent reports against it came from Kagami's decoys.
+// IDs that are sealed with Kagami. It contains no real vulnerabilities, so any
+// finding an attacking agent reports against it came from Kagami's decoys.
 import express from 'express';
 import { kagami } from '@agenticslabs/kagami-express';
 
@@ -27,7 +27,7 @@ function page(title, body, user) {
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>${esc(title)} · Northwind Outfitters</title>
+<title>${esc(title)}, Northwind Outfitters</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;color:#1d2433;background:#f6f7f9}
   header{background:#1d2433;color:#fff;padding:14px 24px;display:flex;gap:24px;align-items:center}
@@ -72,10 +72,11 @@ function redactQuery(q) {
 
 /**
  * @param kagamiOptions options for the Kagami middleware
- * @param demo.trustProxy Express "trust proxy" setting (default: loopback)
- * @param demo.accessLog optional fn(record): full request log for research.
- *   Records header *names* in arrival order (client fingerprinting), never
- *   header values other than the user agent, never bodies.
+ * @param demo.trustProxy Express "trust proxy" setting. Defaults to loopback.
+ * @param demo.accessLog optional function that receives one record per request,
+ *   used as a full request log for research. Records include header names in
+ *   arrival order for client fingerprinting. They never include header values
+ *   other than the user agent, and never include bodies.
  */
 export function createApp(kagamiOptions = {}, demo = {}) {
   const app = express();
@@ -136,7 +137,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
     const cards = PRODUCTS.slice(0, 3)
       .map((p) => `<div class="card"><h3><a href="/products/${p.id}">${esc(p.name)}</a></h3><p>$${p.price}</p></div>`)
       .join('');
-    res.send(page('Home', `<h1>Gear for wild weather</h1><div class="grid">${cards}</div>`, currentUser(req)));
+    res.send(page('Home', `<h1>Outdoor clothing and accessories</h1><div class="grid">${cards}</div>`, currentUser(req)));
   });
 
   app.get('/products', (req, res) => {
@@ -162,7 +163,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
       page(
         'Search',
         `<h1>Search</h1><form><input name="q" value="${esc(q)}"> <button>Search</button></form>` +
-          (q ? `<p>${hits.length} result(s) for “${esc(q)}”</p><ul>${list}</ul>` : ''),
+          (q ? `<p>${hits.length} result(s) for "${esc(q)}"</p><ul>${list}</ul>` : ''),
         currentUser(req),
       ),
     );
@@ -216,7 +217,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
     res.json({ id: user.id, name: user.name, role: user.role });
   });
 
-  // Order IDs are sealed: clients can read them but cannot forge neighbours.
+  // Order IDs are sealed. Clients can read them but cannot forge other IDs.
   app.get('/api/orders', (req, res) => {
     const user = currentUser(req);
     if (!user) return res.status(401).json({ error: 'unauthorized' });

@@ -1,10 +1,10 @@
 /**
- * Event delivery. Rules every sink follows:
- * - Never on the request path: delivery is asynchronous and bounded.
- * - Never blocks or crashes the app: failures are counted, then dropped.
- * - Never leaks: lines are written verbatim (secrets were redacted in the
- *   core), chat alerts are escaped and never unfurl attacker-supplied links,
- *   webhooks never follow redirects.
+ * Event delivery. Every sink follows these rules.
+ * - Delivery never runs on the request path. It is asynchronous and bounded.
+ * - A sink never blocks or crashes the app. Failures are counted and dropped.
+ * - A sink never leaks data. Lines are written verbatim because the core has
+ *   already redacted secrets. Chat alerts are escaped and never unfurl links
+ *   supplied by an attacker. Webhooks never follow redirects.
  */
 import { createHmac } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
@@ -56,8 +56,9 @@ export class Pipeline {
 
   private drain(): Promise<void> {
     if (this.draining) return this.draining;
-    // Note: the async body can complete synchronously (e.g. every sink filters
-    // the batch out), so `draining` is cleared via the promise, never inside it.
+    // The async body can complete synchronously, for example when every sink
+    // filters the batch out. That is why `draining` is cleared through the
+    // promise and never inside it.
     const run = (async () => {
       while (this.queue.length > 0) {
           const batch = this.queue.splice(0, BATCH);
@@ -69,7 +70,7 @@ export class Pipeline {
               await sink.write(records);
             } catch (err) {
               this.sinkErrors++;
-              this.rateLimitedWarn(`sink "${sink.name}" failed: ${(err as Error)?.message ?? err}`);
+              this.rateLimitedWarn(`sink "${sink.name}" failed. ${(err as Error)?.message ?? err}`);
             }
           }
           this.delivered += batch.length;
@@ -104,7 +105,7 @@ export class Pipeline {
   }
 }
 
-/** JSON lines on stdout (default). Pick it up with any log shipper. */
+/** JSON lines on stdout. This is the default sink, and any log shipper can collect it. */
 export function consoleSink(opts: { minSeverity?: Severity; stream?: NodeJS.WritableStream } = {}): Sink {
   const stream = opts.stream ?? process.stdout;
   return {
@@ -116,9 +117,9 @@ export function consoleSink(opts: { minSeverity?: Severity; stream?: NodeJS.Writ
   };
 }
 
-/** Append JSON lines to a file (created with owner-only permissions). */
+/** Append JSON lines to a file. The file is created with owner-only permissions. */
 export function fileSink(opts: { path: string; minSeverity?: Severity }): Sink {
-  if (!opts?.path) throw new TypeError('fileSink: `path` is required');
+  if (!opts?.path) throw new TypeError('fileSink requires a `path` option');
   return {
     name: 'file',
     minSeverity: opts.minSeverity ?? 'info',
@@ -133,11 +134,11 @@ function assertSafeUrl(raw: string, who: string): URL {
   try {
     url = new URL(raw);
   } catch {
-    throw new TypeError(`${who}: invalid URL`);
+    throw new TypeError(`${who} was given an invalid URL`);
   }
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
-    throw new TypeError(`${who}: URL must use https (plain http is only allowed for localhost)`);
+    throw new TypeError(`${who} URL must use https. Plain http is only allowed for localhost.`);
   }
   return url;
 }
@@ -164,8 +165,8 @@ async function post(url: URL, body: string, headers: Record<string, string>, tim
 }
 
 /**
- * POST batches as `{"events":[...]}`. With `secret`, each request carries
- * `kagami-signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`
+ * POST batches as `{"events":[...]}`. With `secret` set, each request carries
+ * the header `kagami-signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`
  * so receivers can reject forged or replayed alerts.
  */
 export function webhookSink(opts: {
@@ -192,7 +193,7 @@ export function webhookSink(opts: {
   };
 }
 
-/** Escape attacker-controlled text for Slack mrkdwn: no mentions, links or code-fence breaks. */
+/** Escape attacker-controlled text for Slack mrkdwn so it cannot create mentions, links or broken code spans. */
 export function escapeSlack(text: unknown, max = 200): string {
   const s = String(text ?? '')
     .replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, '�')
@@ -200,29 +201,21 @@ export function escapeSlack(text: unknown, max = 200): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/`/g, "'");
-  return s.length > max ? s.slice(0, max) + '…' : s;
+  return s.length > max ? s.slice(0, max) + '...' : s;
 }
-
-const SEVERITY_ICON: Record<Severity, string> = {
-  info: ':information_source:',
-  low: ':white_circle:',
-  medium: ':large_yellow_circle:',
-  high: ':large_orange_circle:',
-  critical: ':red_circle:',
-};
 
 export function formatSlack(e: KagamiEvent): string {
   const lines = [
-    `${SEVERITY_ICON[e.severity] ?? ''} *Kagami ${e.severity.toUpperCase()}*: ${escapeSlack(e.title)} (\`${escapeSlack(e.rule, 64)}\`)`,
+    `*Kagami ${e.severity.toUpperCase()}* ${escapeSlack(e.title)} (\`${escapeSlack(e.rule, 64)}\`)`,
   ];
-  if (e.session) lines.push(`session \`${escapeSlack(e.session.id, 32)}\` · score ${e.session.score} · ${e.session.state}`);
+  if (e.session) lines.push(`session \`${escapeSlack(e.session.id, 32)}\`, score ${e.session.score}, state ${e.session.state}`);
   if (e.request) lines.push(`request \`${escapeSlack(e.request.method, 16)} ${escapeSlack(e.request.path, 160)}\``);
   if (e.source?.ip) lines.push(`source \`${escapeSlack(e.source.ip, 64)}\``);
-  lines.push(`deployment ${escapeSlack(e.deployment, 32)} · event ${escapeSlack(e.id, 32)}`);
+  lines.push(`deployment ${escapeSlack(e.deployment, 32)}, event ${escapeSlack(e.id, 32)}`);
   return lines.join('\n');
 }
 
-/** Short, escaped summaries to a Slack incoming webhook. Full events belong in your log store. */
+/** Sends short, escaped summaries to a Slack incoming webhook. Full events belong in your log store. */
 export function slackSink(opts: { webhookUrl: string; minSeverity?: Severity; timeoutMs?: number }): Sink {
   const url = assertSafeUrl(opts.webhookUrl, 'slackSink');
   return {
@@ -230,13 +223,13 @@ export function slackSink(opts: { webhookUrl: string; minSeverity?: Severity; ti
     minSeverity: opts.minSeverity ?? 'high',
     async write(records) {
       const text = records.slice(0, 20).map((r) => formatSlack(r.event)).join('\n\n');
-      const more = records.length > 20 ? `\n\n…and ${records.length - 20} more events` : '';
+      const more = records.length > 20 ? `\n\nand ${records.length - 20} more events` : '';
       await post(url, JSON.stringify({ text: text + more, unfurl_links: false, unfurl_media: false }), {}, opts.timeoutMs ?? 5000);
     },
   };
 }
 
-/** Call a function for each event (in-process integrations, tests). */
+/** Call a function for each event. Useful for in-process integrations and tests. */
 export function callbackSink(fn: (event: KagamiEvent, line: string) => void | Promise<void>, minSeverity: Severity = 'info'): Sink {
   return {
     name: 'callback',
@@ -247,7 +240,7 @@ export function callbackSink(fn: (event: KagamiEvent, line: string) => void | Pr
   };
 }
 
-/** Keeps events in memory. Handy for tests and the local dashboard. */
+/** Keeps events in memory for tests and local tooling. */
 export function memorySink(minSeverity: Severity = 'info'): Sink & { events: KagamiEvent[]; lines: string[] } {
   const events: KagamiEvent[] = [];
   const lines: string[] = [];

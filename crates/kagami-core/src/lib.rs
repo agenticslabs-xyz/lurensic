@@ -2,15 +2,15 @@
 //!
 //! The portable detection and deception engine behind Kagami.
 //!
-//! The core is pure logic: it never touches the network, the filesystem or a
+//! The core is pure logic. It never touches the network, the filesystem or a
 //! clock. Hosts (language adapters) pass in requests and the current time, and
 //! get back verdicts plus pre-serialised, hash-chained audit events. That keeps
 //! the engine deterministic, testable with shared conformance vectors, and
 //! byte-identical across every language that embeds the WebAssembly build.
 //!
-//! Security model: all decoys, honeytokens and seals are derived from a
-//! per-deployment secret (Kerckhoffs's principle). Reading this source tells an
-//! attacker *that* tripwires exist, never *which* ones a deployment uses.
+//! All decoys, honeytokens and seals are derived from a per-deployment secret
+//! (Kerckhoffs's principle). Reading this source tells an attacker *that*
+//! tripwires exist, never *which* ones a deployment uses.
 
 #![deny(unsafe_code)]
 
