@@ -57,6 +57,18 @@ struct VerifyArgs {
     name: String,
 }
 
+#[derive(Deserialize)]
+struct ContainedArgs {
+    #[serde(default)]
+    now_ms: u64,
+}
+
+#[derive(Deserialize)]
+struct ReleaseArgs {
+    /// An address, an IPv6 /64, or a source id.
+    key: String,
+}
+
 fn ok(result: Value) -> String {
     json!({"ok": true, "result": result}).to_string()
 }
@@ -119,6 +131,14 @@ impl Runtime {
                 json!(engine.verify_sealed(&a.request, &a.sealed, &a.name))
             }
             "manifest" => engine.manifest(),
+            "contained" => {
+                let a: ContainedArgs = parse(env.args)?;
+                json!({"entries": engine.contained_list(a.now_ms)})
+            }
+            "release" => {
+                let a: ReleaseArgs = parse(env.args)?;
+                json!({"released": engine.release(&a.key)})
+            }
             other => return Err(err("unknown_op", format!("unknown op `{other}`"))),
         };
         Ok(ok(result))

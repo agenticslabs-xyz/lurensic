@@ -23,6 +23,8 @@ export interface KagamiRequestContext {
   readonly score: number;
   /** Every rule this request matched, including repeats that produce no new event. */
   readonly rules: readonly string[];
+  /** The client's machine is contained. In protect mode Kagami answered and the app never sees the request. */
+  readonly contained: boolean;
   /** Seal a value you hand to the client (ID, price, role). */
   seal(value: string | number): string;
   /**
@@ -89,16 +91,24 @@ function looksLikeHtml(s: string): boolean {
   return head.startsWith('<!doctype html') || head.startsWith('<html');
 }
 
-/** The body of an app 401, kept so decoy routes can answer 401 in the same format. */
-interface Sample401 {
-  value?: { contentType: string; body: string };
+/** The app's own response body, before any decoration. */
+interface Captured {
+  body?: string;
 }
 
-function wrapSend(res: Response, k: Kagami, verdict: Verdict, path: string, sample: Sample401): void {
+const MAX_CAPTURE = 64 * 1024;
+
+function wrapSend(res: Response, k: Kagami, verdict: Verdict, path: string, captured: Captured): void {
   const original = res.send;
   res.send = function patchedSend(this: Response, body?: unknown) {
     let out = body;
     try {
+      if (typeof body === 'string') {
+        // Keep the app's original body for the shadow (`capture`) and for
+        // learning the app's 401 format. Kagami's own bait is never stored.
+        const wanted = verdict.capture || (this.statusCode === 401 && k.wants401Body);
+        if (wanted && body.length <= MAX_CAPTURE) captured.body = body;
+      }
       if (typeof body === 'string' && this.statusCode === 200) {
         const ct = String(this.get('Content-Type') ?? '').toLowerCase();
         if (verdict.decorateJson && ct.includes('json')) {
@@ -106,14 +116,22 @@ function wrapSend(res: Response, k: Kagami, verdict: Verdict, path: string, samp
         } else if (verdict.decorateHtml && (ct.includes('text/html') || (!ct && looksLikeHtml(body)))) {
           out = k.decorateHtml(verdict, body, path);
         }
-      } else if (typeof body === 'string' && this.statusCode === 401 && body.length <= 1024) {
-        sample.value = { contentType: String(this.get('Content-Type') ?? ''), body };
       }
     } catch {
       out = body;
     }
     return original.call(this, out);
   } as Response['send'];
+}
+
+/** The response headers the core uses. Only the presence of `set-cookie` matters. */
+function responseHeaders(res: Response): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const name of ['content-type', 'cache-control', 'location', 'set-cookie']) {
+    const v = res.getHeader(name);
+    if (v !== undefined) out.push([name, Array.isArray(v) ? v.join(', ') : String(v)]);
+  }
+  return out;
 }
 
 export type KagamiMiddleware = [RequestHandler, ErrorRequestHandler] & { kagami: Kagami };
@@ -143,12 +161,24 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
       source: verdict.source,
       state: verdict.state,
       rules: verdict.rules,
+      contained: verdict.contained,
       score: verdict.score,
       seal: (value) => k.seal(value),
       verify: (sealed, name) => k.verify(info, sealed, name),
     };
-    const sample: Sample401 = {};
-    res.once('finish', () => k.response(info, res.statusCode, sample.value));
+    const captured: Captured = {};
+    res.once('finish', () => {
+      try {
+        const status = res.statusCode;
+        const wanted = verdict.capture || (status === 401 && k.wants401Body);
+        // Redirects are often sent with `res.end`, so they have no captured
+        // body. Their headers are all the shadow needs.
+        const usable = captured.body !== undefined || (status >= 300 && status < 400);
+        k.response(info, status, wanted && usable ? { headers: responseHeaders(res), body: captured.body ?? '' } : undefined);
+      } catch {
+        /* fail open */
+      }
+    });
     const action = verdict.action;
     if (action.type === 'respond') {
       try {
@@ -160,9 +190,9 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
         if (res.headersSent) return true;
       }
     }
-    if (decorate && (verdict.decorateHtml || verdict.decorateJson || k.wants401Body)) {
+    if (decorate && (verdict.decorateHtml || verdict.decorateJson || verdict.capture || k.wants401Body)) {
       try {
-        wrapSend(res, k, verdict, info.path, sample);
+        wrapSend(res, k, verdict, info.path, captured);
       } catch {
         /* fail open */
       }

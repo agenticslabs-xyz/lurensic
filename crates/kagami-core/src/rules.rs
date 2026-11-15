@@ -362,6 +362,28 @@ rule!(
     []
 );
 rule!(
+    CONTAINMENT_STARTED,
+    "containment.started",
+    "Machine contained",
+    "session",
+    High,
+    High,
+    0,
+    0,
+    false,
+    []
+);
+
+/// Rules that only an attacker triggers. Honest visitors never use a planted
+/// credential, send a decoy field with a changed value, request a decoy route
+/// or forge a sealed value. These start containment by default.
+pub const CONTAINMENT_TRIPWIRES: &[&str] = &[
+    "honeytoken.used",
+    "decoy.param",
+    "decoy.route",
+    "tamper.sealed_value",
+];
+rule!(
     SYSTEM_STARTED,
     "system.started",
     "Kagami engine started",

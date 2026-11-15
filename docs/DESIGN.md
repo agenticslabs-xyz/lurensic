@@ -177,6 +177,7 @@ byte-set prefilter lets ordinary values skip nearly the whole pattern table.
 | `request.absolute_target` | low | 20 and 5 | |
 | `client.automation`, `client.ai_agent` | info | 5 and 0, 0 and 0 | |
 | `session.flagged` | high | state transition | |
+| `containment.started` | high | lifecycle, see section 6.1 | |
 
 `client.forged_forwarding` fires when a client address header such as `X-Forwarded-For` holds something no proxy
 writes, such as markup, a hostname, a CIDR range or an encoded line break. Private and loopback addresses do not fire
@@ -201,6 +202,54 @@ Info level rules add to the score but never produce a standalone event. They app
 
 Decoy responses go through the app's normal response path, so they carry the same headers as real
 responses (for example `x-powered-by` and security headers). Kagami adds no header, cookie or fixed marker anywhere.
+
+### 6.1 Containment
+
+Deception detects an attacker, but it cannot stop one from finding a real flaw later. Containment acts on the
+detection. It is off by default, enforced in protect mode only, and a dry run in observe mode, where it emits
+`containment.started` with `"enforced": false` and changes nothing.
+
+**Trigger.** By default only the four tripwires honest visitors never touch start containment:
+`honeytoken.used`, `decoy.param`, `decoy.route` and `tamper.sealed_value`. With `trigger: 'flagged'`, a session that
+reaches the flagged state through accumulated signals also does. The request that trips the wire is already
+contained, because containment is decided before the host passes the request on. A tampered sealed value is found
+inside the application's handler (through `verify`), so it contains from the next request.
+
+**Scope.** Containment covers a machine, which is an IPv4 address or an IPv6 /64, across every session and user agent
+on it. A honeytoken used from another machine also contains the machine it was issued to. Allowlisted addresses
+(`allow`) are never contained. A request that a browser sent on behalf of another site, marked by
+`Sec-Fetch-Site: cross-site` or an `Origin` whose host differs from the request's, is detected and logged but does
+not contain the sender. Without this, an attacker could make a real visitor's browser submit a changed decoy field
+from a hidden form and get that visitor locked out.
+
+**Duration.** A machine stays contained for `ttl_secs` (one day by default) after its last trigger.
+`kagami.release(ip)` ends it early. Contained machines are held in a bounded table (`max_entries`), which drops the
+entry closest to expiry first when full. Ignored paths, such as health checks, are never contained.
+
+**Action.** With `block`, Kagami answers `403 Forbidden`. With `shadow`, the default, Kagami answers from copies of
+public responses and never from the live application.
+
+1. The adapter passes a response to the core only when the inspection asked for it (`capture`), which happens for a
+   GET without a cookie or an `Authorization` header from a machine that is not contained. The core checks this again.
+2. The core stores a response only if a shared HTTP cache could store it. The status is 200, a same-origin redirect,
+   401, 404 or 410. There is no `Set-Cookie`, no `Cache-Control: private` or `no-store`, a text, HTML, JSON or XML
+   type, and a body of at most 64 KiB. Decoy routes and bait paths are never stored. Copies are refreshed from live
+   traffic every five minutes and held within a memory budget (`shadow_cache_bytes`, 4 MiB by default), oldest first.
+3. A contained GET is answered with the copy for the same URL, else the copy for the bare path without a query
+   string, else the app's own 404 page (HTML or JSON, whichever fits the request). Other methods get the bare path's
+   copy or the 404. Replayed pages carry the same bait as live ones, decorated for the contained machine.
+4. Decoy routes and bait files keep answering a contained machine, so it stays busy with them.
+
+Because only what a shared cache could hold is replayed, a contained attacker never sees anything an anonymous
+visitor could not. A page reflecting another visitor's query string is replayed only to a request with the same
+query string.
+
+**Enforcers.** The host hands each new containment to its enforcers, which push it to systems in front of the app.
+They run off the request path in batches. Containments that arrive while an enforcer call is running are merged into
+the next call, and a failing enforcer is counted in `stats().enforcerErrors` and never affects requests. By default
+an enforcer receives only public addresses, so loopback tests, private networks and documentation ranges never reach
+an edge firewall. The Node package includes `blocklistFile`, `webhookEnforcer` and `callbackEnforcer`. Cloudflare
+support (an IP list referenced by a WAF custom rule) is a separate package, so the engine depends on no provider.
 
 ## 7. Security model
 
@@ -278,13 +327,15 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `ignorePaths` | `[]` | Paths skipped entirely, such as health checks and static assets |
 | `ipLogging` | `raw` | `raw`, `hashed` (keyed per deployment) or `omit` |
 | `sinks` | `[consoleSink()]` | |
+| `containment` | off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
+| `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile`, `webhookEnforcer` or `cloudflareEnforcer` |
 | `maxBodyBytes` | 16384 | |
 | `maxEventsPerMinute` | 600 | |
 | `maxSessions` | 50000 | |
 
 ## 12. Roadmap
 
-1. **Utsusemi (fake mode).** Flagged sessions receive believable fake versions of real routes (shadow responses).
+1. **Utsusemi.** A richer shadow that also answers personalised routes for contained machines with consistent fake data.
 2. More adapters (Next.js, Fastify, FastAPI, Django, Go) with a shared conformance vector suite.
 3. A shared session store (Redis) for multi-instance deployments.
 4. Off-site honeytoken monitoring (cloud canary credentials) and a forged JWT tripwire.

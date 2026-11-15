@@ -8,8 +8,9 @@
  */
 import { randomBytes } from 'node:crypto';
 import { Core, KagamiCoreError } from './core.js';
+import { EnforcerPipeline } from './enforce.js';
 import { consoleSink, Pipeline } from './sinks.js';
-import type { HttpRequest, KagamiOptions, KagamiStats, Mode, Verdict } from './types.js';
+import type { ContainedMachine, HttpRequest, KagamiOptions, KagamiStats, Mode, ResponseSample, Verdict } from './types.js';
 
 const PASS: Omit<Verdict, 'session' | 'source'> = {
   score: 0,
@@ -19,7 +20,19 @@ const PASS: Omit<Verdict, 'session' | 'source'> = {
   decorateHtml: false,
   decorateJson: false,
   rules: [],
+  contained: false,
+  capture: false,
+  containment: [],
 };
+
+interface CoreEntry {
+  source: string;
+  target: string;
+  public: boolean;
+  reason: string;
+  since_ms: number;
+  until_ms: number;
+}
 
 interface CoreInspection {
   session: string;
@@ -31,7 +44,32 @@ interface CoreInspection {
   decorate_html: boolean;
   decorate_json: boolean;
   rules?: string[];
+  contained?: boolean;
+  capture?: boolean;
+  contain?: CoreEntry[];
   events: string[];
+}
+
+const machine = (e: CoreEntry): ContainedMachine => ({
+  source: e.source,
+  target: e.target,
+  public: e.public,
+  reason: e.reason,
+  since: e.since_ms,
+  until: e.until_ms,
+});
+
+/** Response headers the core needs. Values of `set-cookie` are never passed on, only its presence. */
+const SAMPLE_HEADERS = new Set(['content-type', 'cache-control', 'location']);
+
+function sampleHeaders(headers: Array<[string, string]>): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const [k, v] of headers) {
+    const name = k.toLowerCase();
+    if (SAMPLE_HEADERS.has(name)) out.push([name, String(v).slice(0, 1024)]);
+    else if (name === 'set-cookie') out.push(['set-cookie', '1']);
+  }
+  return out;
 }
 
 function envFlag(name: string): boolean {
@@ -62,6 +100,18 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
   if (o.ipLogging) cfg.ip_logging = o.ipLogging;
   if (o.maxEventsPerMinute !== undefined) cfg.max_events_per_minute = o.maxEventsPerMinute;
   if (o.maxSessions !== undefined) cfg.max_sessions = o.maxSessions;
+  if (o.containment) {
+    const c = o.containment === true ? {} : o.containment;
+    cfg.containment = {
+      enabled: true,
+      ...(c.trigger !== undefined && { trigger: c.trigger }),
+      ...(c.action !== undefined && { action: c.action }),
+      ...(c.ttlSeconds !== undefined && { ttl_secs: c.ttlSeconds }),
+      ...(c.allow !== undefined && { allow: c.allow }),
+      ...(c.maxEntries !== undefined && { max_entries: c.maxEntries }),
+      ...(c.shadowCacheBytes !== undefined && { shadow_cache_bytes: c.shadowCacheBytes }),
+    };
+  }
   return cfg;
 }
 
@@ -79,6 +129,7 @@ export class Kagami {
   private lastRebuild = 0;
   private lastFaultWarn = 0;
   private learned401 = false;
+  private readonly enforcement: EnforcerPipeline;
 
   constructor(options: KagamiOptions = {}) {
     const logger = options.logger ?? console;
@@ -95,6 +146,11 @@ export class Kagami {
     this.instanceId = options.instanceId ?? randomBytes(6).toString('hex');
     this.pipeline = new Pipeline(options.sinks ?? [consoleSink()], this.warn);
     this.enabled = options.enabled !== false && !envFlag('KAGAMI_DISABLED');
+    // Enforcers only start when Kagami runs, so the kill switch also stops them.
+    this.enforcement = new EnforcerPipeline(this.enabled ? (options.enforcers ?? []) : [], this.warn);
+    if ((options.enforcers?.length ?? 0) > 0 && !options.containment) {
+      this.warn('[kagami] Enforcers are configured but containment is off, so they will receive nothing. Set `containment: true`.');
+    }
     if (!this.enabled) return;
 
     let secret = options.secret ?? process.env.KAGAMI_SECRET ?? '';
@@ -190,6 +246,8 @@ export class Kagami {
     try {
       const r = core.call<CoreInspection>('inspect', this.wire(req));
       if (r.events.length) this.pipeline.push(r.events);
+      const containment = (r.contain ?? []).map(machine);
+      if (containment.length) this.enforcement.push('contain', containment);
       return {
         session: r.session,
         source: r.source,
@@ -200,6 +258,9 @@ export class Kagami {
         decorateHtml: r.decorate_html,
         decorateJson: r.decorate_json,
         rules: r.rules ?? [],
+        contained: r.contained ?? false,
+        capture: r.capture ?? false,
+        containment,
       };
     } catch (err) {
       this.fault(err);
@@ -217,15 +278,23 @@ export class Kagami {
   }
 
   /**
-   * Report the response status. Enumeration and brute-force detection use it.
-   * For a 401, pass the response body and content type while `wants401Body` is true.
+   * Report the response. Enumeration and brute-force detection use the status.
+   * Pass `sample` (headers and body) when the verdict asked for it with
+   * `capture`, and for a 401 while `wants401Body` is true. The core keeps
+   * only what a shared cache could keep, and only the presence of
+   * `set-cookie`, never its value.
    */
-  response(req: HttpRequest, status: number, body?: { contentType: string; body: string }): void {
+  response(req: HttpRequest, status: number, sample?: ResponseSample): void {
     const core = this.live();
     if (!core) return;
     try {
-      const sample = status === 401 && body ? { contentType: body.contentType, body: body.body.slice(0, 1024) } : { body: '' };
-      const r = core.call<{ events: string[]; learned_401?: boolean }>('response', this.wire({ ...req, ...sample }, { status }));
+      const extra: Record<string, unknown> = { status };
+      // Bodies over 64 KiB are never replayed, so they are not sent at all.
+      if (sample && sample.body.length <= 65_536) {
+        extra.response_headers = sampleHeaders(sample.headers);
+        extra.response_body = sample.body;
+      }
+      const r = core.call<{ events: string[]; learned_401?: boolean }>('response', this.wire({ ...req, body: '' }, extra));
       if (r.learned_401) this.learned401 = true;
       if (r.events.length) this.pipeline.push(r.events);
     } catch (err) {
@@ -284,12 +353,13 @@ export class Kagami {
     const core = this.live();
     if (!core) return sealed.includes('~') ? sealed.slice(0, sealed.lastIndexOf('~')) : sealed;
     try {
-      const r = core.call<{ valid: boolean; value: string | null; events: string[] }>('verify_sealed', {
+      const r = core.call<{ valid: boolean; value: string | null; contain?: CoreEntry[]; events: string[] }>('verify_sealed', {
         request: this.wire({ ...req, body: '' }),
         sealed,
         name,
       });
       if (r.events.length) this.pipeline.push(r.events);
+      if (r.contain?.length) this.enforcement.push('contain', r.contain.map(machine));
       return r.valid ? r.value : null;
     } catch (err) {
       this.fault(err);
@@ -312,6 +382,39 @@ export class Kagami {
     }
   }
 
+  /**
+   * Machines contained right now, soonest expiry first. The list holds
+   * client addresses, so keep it away from untrusted callers. Use it to feed
+   * your own firewall, WAF or dashboard, or see `formatBlocklist`.
+   */
+  contained(): ContainedMachine[] {
+    const core = this.live();
+    if (!core) return [];
+    try {
+      return core.call<{ entries: CoreEntry[] }>('contained', { now_ms: Date.now() }).entries.map(machine);
+    } catch (err) {
+      this.fault(err);
+      return [];
+    }
+  }
+
+  /**
+   * End containment early for an address, an IPv6 /64, or a source id, and
+   * tell every enforcer. Returns the machines that were released.
+   */
+  release(key: string): ContainedMachine[] {
+    const core = this.live();
+    if (!core) return [];
+    try {
+      const released = core.call<{ released: CoreEntry[] }>('release', { key: String(key) }).released.map(machine);
+      this.enforcement.push('release', released);
+      return released;
+    } catch (err) {
+      this.fault(err);
+      return [];
+    }
+  }
+
   stats(): KagamiStats {
     return {
       enabled: this.enabled,
@@ -320,17 +423,19 @@ export class Kagami {
       events: this.pipeline.delivered,
       dropped: this.pipeline.dropped,
       sinkErrors: this.pipeline.sinkErrors,
+      enforced: this.enforcement.enforced,
+      enforcerErrors: this.enforcement.errors,
       faults: this.faults,
     };
   }
 
-  /** Wait for queued events to reach every sink. */
-  flush(): Promise<void> {
-    return this.pipeline.flush();
+  /** Wait for queued events and enforcement to finish. */
+  async flush(): Promise<void> {
+    await Promise.all([this.pipeline.flush(), this.enforcement.flush()]);
   }
 
-  /** Flush and close sinks. Call this on shutdown. */
-  close(): Promise<void> {
-    return this.pipeline.close();
+  /** Flush and close sinks and enforcers. Call this on shutdown. */
+  async close(): Promise<void> {
+    await Promise.all([this.pipeline.close(), this.enforcement.close()]);
   }
 }

@@ -46,6 +46,39 @@ app.use(kagami());            // observe mode by default
 
 Once a session sets off a tripwire, everything it does is linked to it, and you get one alert with the whole timeline.
 
+## Cut attackers off
+
+Deception alone does not protect a site with real flaws. An agent that believes a decoy can still find
+the real issue later. So Kagami can act on what it detects. With **containment** on, the first tripwire
+cuts the attacker's whole machine off from your application. In every live benchmark round so far the
+attacker's machine was identified within its first 35 requests, and over 99 % of its traffic came after
+that point.
+
+```js
+app.use(kagami({
+  mode: 'protect',
+  containment: true,                 // contain on tripwires that honest visitors never touch
+  enforcers: [blocklistFile({ path: '/etc/nginx/kagami-blocked.conf', format: 'nginx' })],
+}));
+```
+
+- **Shadow by default.** A contained machine is served copies of your public pages and your own 404s, never the live application. It keeps working against a copy and does not learn it was cut off. Only responses a shared HTTP cache could store are copied, so it sees nothing an anonymous visitor could not. `action: 'block'` answers `403` instead.
+- **One machine, every tool.** Containment covers the address the attacker used, or its whole IPv6 /64, across every tool and user agent on it. A honeytoken used from a new address also contains the machine it was issued to.
+- **Hard to turn against your visitors.** Only tripwires contain by default, never accumulated signals. A request a browser sent on behalf of another site (`Sec-Fetch-Site: cross-site` or a foreign `Origin`) is logged but contains nobody, so a forged form cannot get a real visitor locked out. Allowlist your offices and testers with `allow`. Containment expires (one day by default) and `kagami.release(ip)` ends it early.
+- **Dry run first.** In observe mode containment only reports `containment.started` events, so you can see who would have been contained before you enforce it.
+
+**Enforcers** push each containment to the systems in front of your app, so attackers are stopped before
+they reach your servers. They are provider neutral and run off the request path.
+
+| Enforcer | Package | Use it with |
+|---|---|---|
+| `blocklistFile` | `@agenticslabs/kagami` | nginx (`deny` include), ipset, iptables, AWS WAF IP set imports, any tool that reads a list. Written atomically and kept across restarts. |
+| `webhookEnforcer` | `@agenticslabs/kagami` | Your own endpoint, a SOAR, or a function that updates a cloud WAF. Signed with HMAC. |
+| `callbackEnforcer` | `@agenticslabs/kagami` | Anything in process. |
+| `cloudflareEnforcer` | [`@agenticslabs/kagami-cloudflare`](packages/cloudflare/README.md) | A Cloudflare IP list and a WAF custom rule, available on every Cloudflare plan. |
+
+`kagami.contained()` returns the current list for any other integration, and `formatBlocklist` renders it.
+
 ## Built to be safe in production
 
 - **Observe mode by default.** Kagami only detects, and a test proves every response stays **byte-identical** to your app without Kagami. Turn on `protect` once you trust it.
@@ -157,6 +190,7 @@ Results against live AI pentest agents, with the raw logs, are in [benchmarks/](
 crates/kagami-core     Rust engine compiled to WebAssembly (detection, decoys, honeytokens, audit log)
 packages/node          @agenticslabs/kagami, the WASM bridge, event sinks and CLI (framework-agnostic)
 packages/express       @agenticslabs/kagami-express, the Express middleware
+packages/cloudflare    @agenticslabs/kagami-cloudflare, the Cloudflare enforcer and client address helper
 examples/demo-shop     Demo target and attacker persona tests
 docs/                  Design, threat model, benchmark method
 ```
@@ -173,7 +207,9 @@ pnpm demo          # demo shop on http://localhost:41837 in protect mode
 
 ## Roadmap
 
-- **Utsusemi** (fake mode) gives flagged sessions convincing fake versions of your *real* routes
+- **Utsusemi**, a richer shadow that also answers personalised routes with consistent fake data
+- More enforcers, such as AWS WAF IP sets, Fastly and Akamai
+- Reporting contained machines to Cloudflare's Bot Feedback Loop (Enterprise Bot Management)
 - Next.js, Fastify, FastAPI and Django (via wasmtime) and Go (via wazero) adapters, sharing one core
 - Cloudflare Worker and edge deployment
 - Off-site honeytoken alerts using cloud canary credentials

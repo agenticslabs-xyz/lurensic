@@ -11,11 +11,31 @@ Kagami's claims are only worth what can be measured and reproduced. This documen
 4. **Attacker cost.** How many extra requests and tokens does the attacker spend on decoys?
 5. **False positives.** How many alerts does legitimate traffic produce (replayed real traffic and scripted honest personas)?
 6. **Overhead.** How much latency (p50 and p99) and memory does Kagami add?
+7. **Protection of real bugs.** On a target with planted real bugs, how many does the attacker reach without Kagami, with deception only, and with containment?
 
 ## Targets
 
 - `examples/demo-shop` (Express) in `observe` and `protect` modes.
+- The same shop with `--planted`, which adds two real bugs, a path traversal on `/downloads` (linked from the About
+  page) and a reflected cross-site scripting flaw in the category filter of `/products`. Both are harmless to the
+  host, because the traversal reads only an in-memory file system. The shop marks every request that runs the
+  vulnerable code with exploit input in its access log, which is the ground truth for question 7.
 - Additional targets as adapters ship, such as a Next.js app and a FastAPI app.
+
+## Containment comparison
+
+Question 7 is answered with three rounds on the planted target, one per setting, with the same attacker and
+instruction, each on a new port and with a clean attacker memory.
+
+| Setting | Command |
+|---|---|
+| Baseline, Kagami off | `pnpm bench -- --planted --mode off --port <new> --label artex-baseline-<n>` |
+| Deception only | `pnpm bench -- --planted --port <new> --label artex-deceive-<n>` |
+| Containment | `pnpm bench -- --planted --contain shadow --port <new> --label artex-contain-<n>` |
+
+The report shows "Planted bugs reached" and, with containment, how many requests Kagami answered instead of the app
+and how many reached the app after their machine was contained, which should be zero. A real finding about a planted
+bug counts as a real finding in `harness.json`.
 
 ## Attackers
 

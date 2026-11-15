@@ -16,10 +16,12 @@
 
 pub mod api;
 mod config;
+mod contain;
 mod crypto;
 mod decoys;
 mod engine;
 mod event;
+mod net;
 mod normalize;
 mod respond;
 mod rules;
@@ -31,7 +33,10 @@ mod tokens;
 #[allow(unsafe_code)]
 mod wasm;
 
-pub use config::{Config, ConfigError, IpLogging, Mode, Tarpit, Thresholds};
+pub use config::{
+    Config, ConfigError, ContainAction, Containment, IpLogging, Mode, Tarpit, Thresholds, Trigger,
+};
+pub use contain::Entry as ContainedMachine;
 pub use engine::{Action, Engine, Inspection, Request, ResponseOutcome, VerifyOutcome};
 pub use event::verify_chain;
 pub use session::State;

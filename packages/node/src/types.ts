@@ -82,6 +82,77 @@ export interface Verdict {
   decorateJson: boolean;
   /** Every rule this request matched, including repeats that produce no new event. */
   rules: string[];
+  /**
+   * The client's machine is contained. In protect mode `action` is then a
+   * Kagami response and the request must not reach the application.
+   */
+  contained: boolean;
+  /**
+   * The adapter should pass this response's headers and body to `response`,
+   * so contained machines can be served a copy of this public page.
+   */
+  capture: boolean;
+  /** Machines contained by this request. Kagami hands them to its enforcers. */
+  containment: ContainedMachine[];
+}
+
+/** A machine Kagami has cut off from the application. */
+export interface ContainedMachine {
+  /** Keyed hash of the machine's address, as in `Verdict.source`. */
+  source: string;
+  /** What to block. An IPv4 address or an IPv6 /64. Empty when the address is unknown. */
+  target: string;
+  /** The target is a public address. Edge enforcers only act on public targets by default. */
+  public: boolean;
+  /** Rule that started the containment, such as `decoy.param` or `honeytoken.used`. */
+  reason: string;
+  /** Start of the containment, in milliseconds since the epoch. */
+  since: number;
+  /** End of the containment, in milliseconds since the epoch. */
+  until: number;
+}
+
+/**
+ * Receives contained machines and enforces them somewhere else, such as a
+ * firewall, a CDN, a WAF or a blocklist file. Enforcers run off the request
+ * path, in batches, and a failing enforcer never affects requests.
+ */
+export interface Enforcer {
+  name: string;
+  /**
+   * Only receive machines with a public address (the default). Set to false
+   * for enforcers inside your own network, such as a firewall that also
+   * sees private addresses.
+   */
+  publicOnly?: boolean;
+  /** Called with newly contained machines. */
+  contain(machines: ContainedMachine[]): Promise<void>;
+  /** Called with machines released early through `kagami.release`. */
+  release?(machines: ContainedMachine[]): Promise<void>;
+  /** Called once when Kagami starts. Start timers here, and unref them. */
+  start?(): void;
+  close?(): Promise<void>;
+}
+
+export interface ContainmentOptions {
+  /**
+   * `tripwire` (default) contains only on tripwires honest visitors never
+   * touch. `flagged` also contains sessions flagged by accumulated signals.
+   */
+  trigger?: 'tripwire' | 'flagged';
+  /**
+   * `shadow` (default) serves contained machines copies of public responses
+   * and never the live application. `block` answers `403 Forbidden`.
+   */
+  action?: 'shadow' | 'block';
+  /** How long a machine stays contained after its last trigger. Default 86400 (one day). */
+  ttlSeconds?: number;
+  /** Addresses and CIDR ranges that are never contained, such as offices, monitoring and authorised testers. */
+  allow?: string[];
+  /** Maximum contained machines held in memory. Default 10000. */
+  maxEntries?: number;
+  /** Memory budget for the shadow's copies of public responses. Default 4 MiB. */
+  shadowCacheBytes?: number;
 }
 
 export interface KagamiOptions {
@@ -119,6 +190,14 @@ export interface KagamiOptions {
   ipLogging?: 'raw' | 'hashed' | 'omit';
   /** Where events go. The default writes JSON lines to stdout for `low` and above. */
   sinks?: Sink[];
+  /**
+   * Cut machines that trip a tripwire off from the application. Off by
+   * default. `true` uses the defaults. Enforced in protect mode only. In
+   * observe mode it is a dry run that reports `containment.started` events.
+   */
+  containment?: boolean | ContainmentOptions;
+  /** Where contained machines are enforced besides Kagami itself, such as a blocklist file, a webhook or a CDN. */
+  enforcers?: Enforcer[];
   /** Max request body bytes inspected. Default 16 KiB. */
   maxBodyBytes?: number;
   maxEventsPerMinute?: number;
@@ -136,5 +215,16 @@ export interface KagamiStats {
   events: number;
   dropped: number;
   sinkErrors: number;
+  /** Machines handed to enforcers. */
+  enforced: number;
+  enforcerErrors: number;
   faults: number;
+}
+
+/** A response, as passed to `Kagami.response`. */
+export interface ResponseSample {
+  /** Response headers. Pass `content-type`, `cache-control`, `location`, and `set-cookie` when present. */
+  headers: Array<[string, string]>;
+  /** Response body as text. */
+  body: string;
 }

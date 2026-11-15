@@ -20,6 +20,9 @@ pub struct Session {
     /// Keyed hash of the client address alone. Honeytokens are issued per
     /// source, so they can be traced back to the network that received them.
     pub source: String,
+    /// Last client address seen, kept in memory only so that a machine linked
+    /// through a honeytoken can be contained by address.
+    pub ip: String,
     pub score: u32,
     pub state: State,
     pub last_seen: u64,
@@ -32,6 +35,7 @@ impl Session {
     fn new(now: u64) -> Self {
         Session {
             source: String::new(),
+            ip: String::new(),
             score: 0,
             state: State::Clean,
             last_seen: now,
@@ -118,6 +122,29 @@ impl Store {
 
     pub fn source_of(&self, id: &str) -> Option<&str> {
         self.map.get(id).map(|s| s.source.as_str())
+    }
+
+    pub fn note_ip(&mut self, id: &str, ip: &str) {
+        if let Some(s) = self.map.get_mut(id) {
+            if s.ip != ip {
+                s.ip = ip.to_string();
+            }
+        }
+    }
+
+    /// Distinct sources whose id starts with `prefix`, with their last
+    /// address, sorted for determinism.
+    pub fn sources_with_prefix(&self, prefix: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for s in self.map.values().filter(|s| s.source.starts_with(prefix)) {
+            match out.iter_mut().find(|(src, _)| *src == s.source) {
+                Some((_, ip)) if ip.is_empty() => *ip = s.ip.clone(),
+                Some(_) => {}
+                None => out.push((s.source.clone(), s.ip.clone())),
+            }
+        }
+        out.sort();
+        out
     }
 
     /// Live sessions from a source (matched by hex prefix) that have already

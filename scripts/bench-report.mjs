@@ -92,6 +92,7 @@ function note(e) {
   if (e.rule === 'client.forged_forwarding') return `${ev.header} set to ${ev.snippet}`;
   if (e.rule === 'request.malformed_body') return `parser error ${ev.error}`;
   if (e.rule === 'request.absolute_target') return `request target starts with ${ev.snippet}`;
+  if (e.rule === 'containment.started') return `${ev.linked ? 'linked machine' : 'machine'} contained after \`${ev.reason}\`${ev.enforced ? '' : ', dry run'}`;
   if (e.rule === 'session.flagged' && ev.linked_from_session) return `linked by a honeytoken used in session ${String(ev.linked_from_session).slice(0, 8)}`;
   if (e.rule === 'session.flagged') return `score ${e.session?.score}`;
   if (ev.param) return `parameter ${ev.param} in ${ev.location}`;
@@ -131,7 +132,7 @@ for (const s of sessions.values()) {
     rules: [...new Set(detections.map((e) => e.rule))],
     firstSeen,
     timeline: s.events
-      .filter((e) => e.kind === 'detection' || e.rule === 'session.flagged')
+      .filter((e) => e.kind === 'detection' || e.rule === 'session.flagged' || e.rule === 'containment.started')
       .map((e) => ({ after: ms(e.ts) - firstSeen, rule: e.rule, severity: e.severity, path: e.request?.path ?? '', note: note(e) })),
     crossSession: detections.some((e) => e.rule === 'honeytoken.used' && (e.evidence?.cross_source ?? e.evidence?.cross_session)),
   });
@@ -249,6 +250,44 @@ const touchpoints = TOUCHPOINTS.map(([rule, label]) => {
   return { rule, label, sessions: new Set(hits.map((e) => e.session?.id)).size, first_ms: hits.length ? ms(hits[0].ts) - start : null };
 });
 
+// ---------- containment and planted bugs ----------
+//
+// Containment cuts a machine off from the application after a tripwire. The
+// access log marks every contained request, and every request that exploited
+// a planted bug (rounds run with --planted). Together they answer the
+// question that matters, whether the attacker reached real bugs.
+
+const containmentEvents = events.filter((e) => e.rule === 'containment.started');
+const containedRequests = access.filter((a) => a.kagami?.contained).length;
+const firstContained = new Map();
+for (const e of containmentEvents) {
+  const src = e.evidence?.contained_source;
+  if (src && !firstContained.has(src)) firstContained.set(src, ms(e.ts));
+}
+// Requests from a machine that reached the app after it was contained.
+// Ignored paths such as health checks are never contained, so they are left out.
+const leaked = access.filter((a) => {
+  const t = firstContained.get(a.kagami?.source);
+  return t !== undefined && arrived(a) > t + 1 && !a.kagami?.contained && a.kagami?.session;
+}).length;
+const containment = {
+  setting: run.containment ?? (containmentEvents.length ? 'on' : 'off'),
+  machines: firstContained.size,
+  enforced: containmentEvents.some((e) => e.evidence?.enforced),
+  first_ms: containmentEvents.length ? ms(containmentEvents[0].ts) - start : null,
+  contained_requests: containedRequests,
+  reached_app_after_containment: leaked,
+};
+
+const PLANTED = { path_traversal: 'Path traversal on /downloads', reflected_xss: 'Reflected cross-site scripting on /products' };
+const plantedHits = access.filter((a) => a.planted);
+const planted = run.planted_bugs
+  ? Object.entries(PLANTED).map(([bug, label]) => {
+      const hits = plantedHits.filter((a) => a.planted === bug).sort((a, b) => arrived(a) - arrived(b));
+      return { bug, label, requests: hits.length, first_ms: hits.length ? arrived(hits[0]) - start : null };
+    })
+  : null;
+
 const harnessFile = join(runDir, 'harness.json');
 const harness = existsSync(harnessFile) ? JSON.parse(readFileSync(harnessFile, 'utf8')) : null;
 let attacker = null;
@@ -291,6 +330,8 @@ const summary = {
   decoy_route_requests: decoyHits,
   decoy_engagement: decoys ? { ...engagement, share: access.length ? engagement.requests / access.length : 0 } : null,
   touchpoints: touchpoints.map(({ label, ...t }) => t),
+  containment,
+  planted_bugs: planted && { reached: planted.filter((p) => p.requests > 0).length, of: planted.length, detail: planted.map(({ label, ...p }) => p) },
   attacker,
   fastest_tripwire_ms: Math.min(...detected.filter((r) => r.firstTripwire).map((r) => r.firstTripwire.after)),
   fastest_flag_ms: Math.min(...detected.filter((r) => r.flaggedAt).map((r) => r.flaggedAt.after)),
@@ -304,7 +345,7 @@ const md = [];
 const label = run.label ?? basename(runDir);
 md.push(`# Benchmark round ${label}`, '');
 md.push(
-  `Kagami ${run.kagami_version} ran in ${run.mode} mode. The round started at ${run.started_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} and lasted ${duration(finish - start)}.`,
+  `${run.mode === 'off' ? `Kagami ${run.kagami_version} was switched off for this baseline round.` : `Kagami ${run.kagami_version} ran in ${run.mode} mode${run.containment && run.containment !== 'off' ? ` with ${run.containment} containment` : ''}.`}${run.planted_bugs ? ' The target carried two planted real bugs.' : ''} The round started at ${run.started_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} and lasted ${duration(finish - start)}.`,
   chain.ok
     ? `The event log hash chain verifies, covering ${chain.events} events.`
     : `The event log hash chain does not verify. It breaks at line ${chain.line} because of ${chain.reason}.`,
@@ -327,6 +368,28 @@ md.push('');
 
 const pct = (x) => `${(x * 100).toFixed(1)} %`;
 const num = (x) => (x == null ? 'n/a' : Number(x).toLocaleString('en-US'));
+
+if (planted) {
+  md.push('## Planted bugs', '');
+  md.push(
+    'The target carried two real bugs. A request counts as reaching a bug when the application ran the vulnerable code with exploit input, as marked by the application itself in the access log.',
+    '',
+  );
+  md.push('| Bug | Exploit requests that reached it | First reached |', '|---|---|---|');
+  for (const p of planted) md.push(`| ${p.label} | ${p.requests} | ${p.first_ms == null ? 'never' : `${duration(p.first_ms)} into the round`} |`);
+  md.push('', `Planted bugs reached: ${summary.planted_bugs.reached} of ${summary.planted_bugs.of}.`, '');
+}
+
+if (containment.setting !== 'off' || containmentEvents.length) {
+  md.push('## Containment', '');
+  md.push('| Measure | Value |', '|---|---|');
+  md.push(`| Setting | ${containment.setting}${containment.enforced ? '' : ' (dry run, nothing enforced)'} |`);
+  md.push(`| Machines contained | ${containment.machines} |`);
+  md.push(`| First containment | ${containment.first_ms == null ? 'none' : `${duration(containment.first_ms)} into the round`} |`);
+  md.push(`| Requests answered by Kagami instead of the app | ${num(containment.contained_requests)} |`);
+  md.push(`| Requests that reached the app after their machine was contained | ${num(containment.reached_app_after_containment)} |`);
+  md.push('');
+}
 
 if (attacker) {
   md.push('## Attacker outcome', '');
@@ -465,14 +528,14 @@ if (values.publish) {
 
   // Rebuild the index of published rounds.
   const index = ['# Benchmark results', '', 'Each round below was run with the method in [docs/BENCHMARK.md](../docs/BENCHMARK.md). Every folder holds the full report and the raw, hash-chained logs.', ''];
-  index.push('| Round | Date | Mode | Requests | Sessions detected | Sessions flagged | Fastest tripwire | Fastest flag |', '|---|---|---|---|---|---|---|---|');
+  index.push('| Round | Date | Mode | Containment | Requests | Sessions flagged | Fastest flag | Planted bugs reached |', '|---|---|---|---|---|---|---|---|');
   const rounds = readdirSync(join(root, 'benchmarks'), { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(join(root, 'benchmarks', d.name, 'report.json')))
     .map((d) => ({ dir: d.name, r: JSON.parse(readFileSync(join(root, 'benchmarks', d.name, 'report.json'), 'utf8')) }))
     .sort((a, b) => b.r.started_at.localeCompare(a.r.started_at));
   for (const { dir, r } of rounds) {
     index.push(
-      `| [${r.label ?? dir}](${dir}/report.md) | ${r.started_at.slice(0, 10)} | ${r.mode} | ${r.requests} | ${r.sessions_detected} of ${r.sessions} | ${r.sessions_flagged} | ${r.fastest_tripwire_ms == null ? 'none' : duration(r.fastest_tripwire_ms)} | ${r.fastest_flag_ms == null ? 'none' : duration(r.fastest_flag_ms)} |`,
+      `| [${r.label ?? dir}](${dir}/report.md) | ${r.started_at.slice(0, 10)} | ${r.mode} | ${r.containment?.setting ?? 'off'} | ${r.requests} | ${r.sessions_flagged} | ${r.fastest_flag_ms == null ? 'none' : duration(r.fastest_flag_ms)} | ${r.planted_bugs ? `${r.planted_bugs.reached} of ${r.planted_bugs.of}` : 'none planted'} |`,
     );
   }
   writeFileSync(join(root, 'benchmarks', 'README.md'), index.join('\n') + '\n');

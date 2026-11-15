@@ -1,6 +1,15 @@
 // Starts the demo shop for one benchmark round. Examples
 //   pnpm bench                 (port 41837, protect mode)
 //   pnpm bench -- --port 3001 --mode observe --label "artex-hardened"
+//   pnpm bench -- --planted --contain shadow --port 41840 --label "artex-contain-1"
+//   pnpm bench -- --planted --mode off --port 41841 --label "artex-baseline-1"
+//
+// Options
+//   --mode      protect (default), observe, or off (Kagami disabled, the baseline)
+//   --contain   off (default), shadow or block
+//   --planted   add the two planted real bugs (see examples/demo-shop/app.js)
+//   --port      use a new port for every round, because some harnesses keep
+//               their memory per target URL
 //
 // Each round gets its own folder bench-runs/<timestamp>[-label]/ with a fresh
 // deployment secret (new decoys), the Kagami event log, the full request log
@@ -19,10 +28,13 @@ const { values } = parseArgs({
   options: {
     port: { type: 'string', default: '41837' },
     mode: { type: 'string', default: 'protect' },
+    contain: { type: 'string', default: 'off' },
+    planted: { type: 'boolean', default: false },
     label: { type: 'string', default: '' },
   },
 });
-if (!['protect', 'observe'].includes(values.mode)) throw new Error('--mode must be protect or observe');
+if (!['protect', 'observe', 'off'].includes(values.mode)) throw new Error('--mode must be protect, observe or off');
+if (!['off', 'shadow', 'block'].includes(values.contain)) throw new Error('--contain must be off, shadow or block');
 
 // Refuse to start a round on a port another program already uses. Otherwise
 // the demo exits at once and the attacker reaches the other program instead.
@@ -47,6 +59,8 @@ const run = {
   label: values.label || null,
   kagami_version: version,
   mode: values.mode,
+  containment: values.mode === 'off' ? 'off' : values.contain,
+  planted_bugs: values.planted,
   port: Number(values.port),
   target_from_docker: `http://host.docker.internal:${values.port}`,
   files: { events: 'kagami-events.jsonl', access: 'access.jsonl', secret: '.kagami-secret' },
@@ -58,8 +72,18 @@ console.log(`Target for the attacker  ${run.target_from_docker}`);
 console.log(`Open in a browser        http://localhost:${values.port}\n`);
 
 // Production mode, like a real deployment. Express then hides error details.
-const env = { ...process.env, NODE_ENV: 'production', PORT: values.port, KAGAMI_MODE: values.mode, KAGAMI_DATA_DIR: runDir };
+const env = {
+  ...process.env,
+  NODE_ENV: 'production',
+  PORT: values.port,
+  KAGAMI_MODE: values.mode === 'off' ? 'protect' : values.mode,
+  KAGAMI_DATA_DIR: runDir,
+  KAGAMI_CONTAINMENT: values.contain === 'off' ? '' : values.contain,
+  PLANTED_BUGS: values.planted ? '1' : '',
+};
 delete env.KAGAMI_SECRET; // a fresh secret per round, stored in the run folder
+if (values.mode === 'off') env.KAGAMI_DISABLED = '1';
+else delete env.KAGAMI_DISABLED;
 const child = spawn(process.execPath, [join(root, 'examples', 'demo-shop', 'server.js')], { env, stdio: 'inherit' });
 
 const stop = (sig) => child.kill(sig);

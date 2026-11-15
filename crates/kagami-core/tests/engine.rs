@@ -534,8 +534,11 @@ fn decoy_route_401_copies_the_app_401_body() {
         .to_string();
     let mut app_401 = req("203.0.113.9", "curl/8.9", "GET", "/api/orders");
     app_401.status = 401;
-    app_401.content_type = "application/json; charset=utf-8".into();
-    app_401.body = r#"{"error":"Not signed in","code":40101}"#.into();
+    app_401.response_headers = vec![(
+        "content-type".into(),
+        "application/json; charset=utf-8".into(),
+    )];
+    app_401.response_body = r#"{"error":"Not signed in","code":40101}"#.into();
     assert!(e.response(&app_401).learned_401);
 
     let i = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", &route));
@@ -556,8 +559,8 @@ fn decoy_route_401_copies_the_app_401_body() {
         ("application/json", "[]"),
     ] {
         let mut r = app_401.clone();
-        r.content_type = ct.into();
-        r.body = body.into();
+        r.response_headers = vec![("content-type".into(), ct.into())];
+        r.response_body = body.into();
         assert!(!e.response(&r).learned_401, "{body} must not be learned");
     }
 }
@@ -773,4 +776,348 @@ fn only_the_plain_env_file_is_served() {
     }
     let i = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", "/.env.local"));
     assert_eq!(rules_of(&i.events), vec!["bait.path"]);
+}
+
+// Containment. A machine that trips a tripwire is cut off from the live
+// application. These tests cover the trigger, the scope, both actions, the
+// shadow's cache rules, dry runs, allowlists, expiry and release.
+
+fn contain_engine(
+    mode: Mode,
+    tweak: impl FnOnce(&mut kagami_core::Containment),
+) -> (Engine, String, String) {
+    let (e, _) = engine(mode, |c| {
+        c.json_decoys = true;
+        c.containment.enabled = true;
+        tweak(&mut c.containment);
+    });
+    let m = e.manifest();
+    let field = m["decoys"]["json_field"].as_str().unwrap().to_string();
+    let route = m["decoys"]["routes"][0].as_str().unwrap().to_string();
+    (e, field, route)
+}
+
+fn respond_status(i: &kagami_core::Inspection) -> Option<u16> {
+    match &i.action {
+        Action::Respond { status, .. } => Some(*status),
+        Action::Pass => None,
+    }
+}
+
+fn trip_url(field: &str) -> String {
+    format!("/api/products?{field}=admin")
+}
+
+#[test]
+fn containment_is_off_by_default() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.json_decoys = true);
+    let field = e.manifest()["decoys"]["json_field"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let i = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", &trip_url(&field)));
+    assert!(!i.contained && i.contain.is_empty());
+    let next = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", "/"));
+    assert_eq!(next.action, Action::Pass);
+}
+
+#[test]
+fn a_tripwire_cuts_the_whole_machine_off_from_the_app() {
+    let (mut e, field, _) = contain_engine(Mode::Protect, |c| {
+        c.action = kagami_core::ContainAction::Block
+    });
+    let trip = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", &trip_url(&field)));
+    assert!(trip.contained, "the tripping request itself is contained");
+    assert_eq!(respond_status(&trip), Some(403));
+    assert_eq!(trip.contain.len(), 1);
+    let c = &trip.contain[0];
+    assert_eq!(c.target, "198.51.100.4");
+    assert_eq!(c.reason, "decoy.param");
+    assert!(!c.public, "documentation range addresses are not public");
+    let started: Value = serde_json::from_str(
+        trip.events
+            .iter()
+            .find(|e| e.contains("containment.started"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(started["evidence"]["enforced"], true);
+    assert_eq!(started["evidence"]["reason"], "decoy.param");
+
+    // Every tool on that machine is cut off, other machines are not.
+    let other_tool = e.inspect(&req("198.51.100.4", "python-requests/2.32", "GET", "/"));
+    assert_eq!(respond_status(&other_tool), Some(403));
+    assert!(other_tool.contain.is_empty(), "announced once");
+    let neighbour = e.inspect(&req("198.51.100.5", BROWSER, "GET", "/"));
+    assert_eq!(neighbour.action, Action::Pass);
+}
+
+#[test]
+fn an_ipv6_slash_64_is_one_machine() {
+    let (mut e, field, _) = contain_engine(Mode::Protect, |_| {});
+    let trip = e.inspect(&req(
+        "2a01:4f8:1:2::10",
+        "curl/8.9",
+        "GET",
+        &trip_url(&field),
+    ));
+    assert_eq!(trip.contain[0].target, "2a01:4f8:1:2::/64");
+    assert!(trip.contain[0].public);
+    let rotated = e.inspect(&req("2a01:4f8:1:2:dead:beef::1", "curl/8.9", "GET", "/"));
+    assert!(
+        rotated.contained,
+        "a new address in the same /64 stays contained"
+    );
+    let elsewhere = e.inspect(&req("2a01:4f8:1:3::10", "curl/8.9", "GET", "/"));
+    assert!(!elsewhere.contained);
+}
+
+#[test]
+fn the_shadow_replays_only_public_responses() {
+    let (mut e, field, _) = contain_engine(Mode::Protect, |_| {});
+    let page = "<!doctype html><html><body><h1>Shop</h1><form method=post action=/login></form></body></html>";
+    // An anonymous visitor's request is captured.
+    let visit = e.inspect(&req("198.51.100.20", BROWSER, "GET", "/"));
+    assert!(visit.capture);
+    let mut r = req("198.51.100.20", BROWSER, "GET", "/");
+    r.status = 200;
+    r.response_headers = vec![("content-type".into(), "text/html; charset=utf-8".into())];
+    r.response_body = page.into();
+    e.response(&r);
+    let mut nf = req("198.51.100.20", BROWSER, "GET", "/missing");
+    nf.status = 404;
+    nf.response_headers = vec![("content-type".into(), "text/html; charset=utf-8".into())];
+    nf.response_body = "<h1>Not found</h1>".into();
+    e.response(&nf);
+    // A signed-in visitor's page is never captured, even if the host sends it.
+    let mut signed_in = req("198.51.100.21", BROWSER, "GET", "/account");
+    signed_in.headers.push(("cookie".into(), "sid=abc".into()));
+    assert!(!e.inspect(&signed_in).capture);
+    signed_in.status = 200;
+    signed_in.response_headers = vec![("content-type".into(), "text/html".into())];
+    signed_in.response_body = "<h1>Orders of Alice</h1>".into();
+    e.response(&signed_in);
+
+    // The attacker trips a wire, then only ever sees the shadow.
+    e.inspect(&req("203.0.113.66", "curl/8.9", "GET", &trip_url(&field)));
+    let home = e.inspect(&req("203.0.113.66", "curl/8.9", "GET", "/"));
+    let Action::Respond { status, body, .. } = &home.action else {
+        panic!("the shadow answers")
+    };
+    assert_eq!(*status, 200);
+    assert!(body.contains("<h1>Shop</h1>"));
+    assert!(
+        body.contains("sk_live_"),
+        "replayed pages carry the bait comment"
+    );
+    assert!(
+        !body.contains("type=\"hidden\""),
+        "form decoys are off in this engine"
+    );
+    assert!(!home.capture, "contained traffic is never stored");
+
+    let account = e.inspect(&req("203.0.113.66", "curl/8.9", "GET", "/account"));
+    let Action::Respond { status, body, .. } = &account.action else {
+        panic!()
+    };
+    assert_eq!(
+        *status, 404,
+        "a page only signed-in users saw is not replayed"
+    );
+    assert!(!body.contains("Alice"));
+
+    let login = with_body(
+        req("203.0.113.66", "curl/8.9", "POST", "/login"),
+        "application/x-www-form-urlencoded",
+        "email=admin%40x.y&password=x",
+    );
+    assert_eq!(respond_status(&e.inspect(&login)), Some(404));
+}
+
+#[test]
+fn decoys_keep_answering_a_contained_machine() {
+    let (mut e, field, route) = contain_engine(Mode::Protect, |_| {});
+    e.inspect(&req("203.0.113.66", "curl/8.9", "GET", &trip_url(&field)));
+    assert_eq!(
+        respond_status(&e.inspect(&req("203.0.113.66", "curl/8.9", "GET", &route))),
+        Some(401)
+    );
+    let env = e.inspect(&req("203.0.113.66", "curl/8.9", "GET", "/.env"));
+    let Action::Respond { body, .. } = &env.action else {
+        panic!()
+    };
+    assert!(body.contains("NODE_ENV=production"));
+}
+
+#[test]
+fn observe_mode_runs_containment_as_a_dry_run() {
+    let (mut e, field, _) = contain_engine(Mode::Observe, |_| {});
+    let trip = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", &trip_url(&field)));
+    assert_eq!(trip.action, Action::Pass);
+    assert!(trip.contain.is_empty(), "nothing is pushed to enforcers");
+    let started: Value = serde_json::from_str(
+        trip.events
+            .iter()
+            .find(|e| e.contains("containment.started"))
+            .expect("the dry run still reports"),
+    )
+    .unwrap();
+    assert_eq!(started["evidence"]["enforced"], false);
+    assert_eq!(
+        e.inspect(&req("198.51.100.4", "curl/8.9", "GET", "/"))
+            .action,
+        Action::Pass
+    );
+}
+
+#[test]
+fn allowlisted_addresses_are_never_contained() {
+    let (mut e, field, _) = contain_engine(Mode::Protect, |c| {
+        c.allow = vec!["198.51.100.0/24".into(), "2001:db8::/32".into()];
+    });
+    for ip in ["198.51.100.4", "::ffff:198.51.100.9", "2001:db8::5"] {
+        let i = e.inspect(&req(ip, "curl/8.9", "GET", &trip_url(&field)));
+        assert!(!i.contained && i.contain.is_empty(), "{ip}");
+        assert!(rules_of(&i.events).contains(&"decoy.param".to_string()));
+    }
+}
+
+#[test]
+fn a_stolen_honeytoken_contains_the_machine_it_was_issued_to() {
+    let (mut e, _, _) = contain_engine(Mode::Protect, |_| {});
+    // Machine A collects the fake .env but never uses it itself.
+    let probe = e.inspect(&req("192.0.2.10", "curl/8.9", "GET", "/.env"));
+    assert!(!probe.contained, "probing a bait path is not a tripwire");
+    let Action::Respond { body, .. } = &probe.action else {
+        panic!()
+    };
+    let secret = env_credential(body).to_string();
+    // Machine B uses it.
+    let login = with_body(
+        req("198.51.100.30", "python-httpx/0.27", "POST", "/login"),
+        "application/x-www-form-urlencoded",
+        &format!("email=a%40b.c&password={secret}"),
+    );
+    let i = e.inspect(&login);
+    assert!(i.contained);
+    let targets: Vec<&str> = i.contain.iter().map(|c| c.target.as_str()).collect();
+    assert!(
+        targets.contains(&"198.51.100.30") && targets.contains(&"192.0.2.10"),
+        "{targets:?}"
+    );
+    assert!(
+        e.inspect(&req("192.0.2.10", "curl/8.9", "GET", "/"))
+            .contained
+    );
+}
+
+#[test]
+fn containment_expires_and_can_be_released() {
+    let (mut e, field, _) = contain_engine(Mode::Protect, |c| c.ttl_secs = 60);
+    e.inspect(&req("198.51.100.4", "curl/8.9", "GET", &trip_url(&field)));
+    let mut later = req("198.51.100.4", "curl/8.9", "GET", "/");
+    later.now_ms = T0 + 1000 + 59_000;
+    assert!(e.inspect(&later).contained);
+    later.now_ms = T0 + 1000 + 61_000;
+    assert!(!e.inspect(&later).contained, "expired after the TTL");
+
+    e.inspect(&req("198.51.100.7", "curl/8.9", "GET", &trip_url(&field)));
+    assert_eq!(e.contained_list(T0).len(), 1);
+    assert_eq!(e.release("::ffff:198.51.100.7").len(), 1);
+    assert!(
+        !e.inspect(&req("198.51.100.7", "curl/8.9", "GET", "/"))
+            .contained
+    );
+}
+
+#[test]
+fn the_flagged_trigger_also_contains_on_accumulated_signals() {
+    let attack = [
+        "/search?q=%27%20OR%201%3D1--",
+        "/search?q=%7B%7B7*7%7D%7D",
+        "/search?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+        "/search?q=..%2F..%2Fetc%2Fpasswd",
+    ];
+    for (trigger, expect) in [
+        (kagami_core::Trigger::Tripwire, false),
+        (kagami_core::Trigger::Flagged, true),
+    ] {
+        let (mut e, _, _) = contain_engine(Mode::Protect, |c| c.trigger = trigger);
+        let mut last = None;
+        for a in attack {
+            last = Some(e.inspect(&req("198.51.100.4", "curl/8.9", "GET", a)));
+        }
+        let last = last.unwrap();
+        assert_eq!(last.state, State::Flagged);
+        assert_eq!(last.contained, expect, "{trigger:?}");
+    }
+}
+
+#[test]
+fn a_tampered_sealed_value_contains_from_the_next_request() {
+    let (mut e, _, _) = contain_engine(Mode::Protect, |_| {});
+    let r = req("198.51.100.4", BROWSER, "GET", "/api/orders/5001");
+    let v = e.verify_sealed(&r, "5001~AAAAAAAAAAAAAAAA", "order_id");
+    assert!(!v.valid);
+    assert_eq!(v.contain.len(), 1);
+    assert!(
+        e.inspect(&req("198.51.100.4", BROWSER, "GET", "/"))
+            .contained
+    );
+}
+
+#[test]
+fn containment_settings_are_validated() {
+    let tweaks: [fn(&mut Config); 3] = [
+        |c| c.containment.allow = vec!["not a range".into()],
+        |c| c.containment.ttl_secs = 5,
+        |c| c.containment.max_entries = 1,
+    ];
+    for tweak in tweaks {
+        let mut cfg = Config {
+            secret: SECRET.into(),
+            ..Config::default()
+        };
+        tweak(&mut cfg);
+        let err = Engine::new(cfg, T0, "t").err().expect("rejected");
+        assert_eq!(err.code, "invalid_containment");
+    }
+}
+
+#[test]
+fn a_cross_site_forgery_cannot_get_a_visitor_contained() {
+    let (mut e, field, _) = contain_engine(Mode::Protect, |_| {});
+    // An attacker's page makes the visitor's browser submit the changed field.
+    let mut forged = with_body(
+        req("198.51.100.80", BROWSER, "POST", "/login"),
+        "application/x-www-form-urlencoded",
+        &format!("{field}=admin&email=a%40b.c&password=x"),
+    );
+    forged
+        .headers
+        .push(("sec-fetch-site".into(), "cross-site".into()));
+    let i = e.inspect(&forged);
+    assert!(
+        rules_of(&i.events).contains(&"decoy.param".to_string()),
+        "still detected"
+    );
+    assert!(!i.contained && i.contain.is_empty(), "but not contained");
+
+    // Older browsers send only Origin. A foreign origin counts as cross-site.
+    let mut old = req("198.51.100.81", BROWSER, "GET", &trip_url(&field));
+    old.headers
+        .push(("origin".into(), "https://evil.example".into()));
+    assert!(!e.inspect(&old).contained);
+
+    // The site's own origin, and tools that send no such headers, are contained.
+    let mut same = req("198.51.100.82", BROWSER, "GET", &trip_url(&field));
+    same.headers
+        .push(("origin".into(), "https://shop.example.co.nz".into()));
+    same.headers
+        .push(("sec-fetch-site".into(), "same-origin".into()));
+    assert!(e.inspect(&same).contained);
+    assert!(
+        e.inspect(&req("198.51.100.83", "curl/8.9", "GET", &trip_url(&field)))
+            .contained
+    );
 }

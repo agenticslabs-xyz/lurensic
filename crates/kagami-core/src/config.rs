@@ -57,6 +57,65 @@ impl Default for Thresholds {
     }
 }
 
+/// What starts containment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Trigger {
+    /// Only tripwires that honest visitors never touch: a planted credential,
+    /// a decoy field or parameter, a decoy route, or a tampered sealed value.
+    #[default]
+    Tripwire,
+    /// Tripwires, and any session that reaches the flagged state through
+    /// accumulated signals. Wider, with a higher false positive risk.
+    Flagged,
+}
+
+/// What a contained machine receives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainAction {
+    /// Replayed public responses, never the live application. The agent keeps
+    /// working against a copy and does not learn that it was cut off.
+    #[default]
+    Shadow,
+    /// A plain `403 Forbidden`.
+    Block,
+}
+
+/// Containment cuts a machine off from the live application once it has
+/// shown itself to be an attacker. Off by default. Enforced in protect mode
+/// only; in observe mode it runs as a dry run that only emits events.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Containment {
+    pub enabled: bool,
+    pub trigger: Trigger,
+    pub action: ContainAction,
+    /// How long a machine stays contained after its last trigger.
+    pub ttl_secs: u64,
+    /// Addresses and CIDR ranges that are never contained, such as your own
+    /// offices, monitoring and authorised testers.
+    pub allow: Vec<String>,
+    /// Maximum number of contained machines held in memory.
+    pub max_entries: usize,
+    /// Memory budget for the public responses the shadow replays.
+    pub shadow_cache_bytes: usize,
+}
+
+impl Default for Containment {
+    fn default() -> Self {
+        Containment {
+            enabled: false,
+            trigger: Trigger::Tripwire,
+            action: ContainAction::Shadow,
+            ttl_secs: 24 * 60 * 60,
+            allow: Vec::new(),
+            max_entries: 10_000,
+            shadow_cache_bytes: 4 * 1024 * 1024,
+        }
+    }
+}
+
 /// Engine configuration. Unknown fields are rejected so typos surface
 /// immediately instead of silently falling back to defaults.
 ///
@@ -80,6 +139,7 @@ pub struct Config {
     /// In protect mode, answer the derived decoy routes.
     pub decoy_routes: bool,
     pub tarpit: Tarpit,
+    pub containment: Containment,
     pub thresholds: Thresholds,
     pub ip_logging: IpLogging,
     /// Path prefixes the engine skips entirely (health checks, static assets).
@@ -107,6 +167,7 @@ impl Default for Config {
             bait_files: true,
             decoy_routes: true,
             tarpit: Tarpit::default(),
+            containment: Containment::default(),
             thresholds: Thresholds::default(),
             ip_logging: IpLogging::Raw,
             ignore_paths: Vec::new(),
@@ -166,6 +227,32 @@ impl Config {
             return Err(ConfigError::new(
                 "invalid_tarpit",
                 "tarpit.min_ms must be <= tarpit.max_ms, and tarpit.max_ms must be <= 30000.",
+            ));
+        }
+        let c = &self.containment;
+        if !(60..=30 * 24 * 60 * 60).contains(&c.ttl_secs) {
+            return Err(ConfigError::new(
+                "invalid_containment",
+                "containment.ttl_secs must be between 60 (one minute) and 2592000 (30 days).",
+            ));
+        }
+        if c.max_entries < 10 || c.shadow_cache_bytes > 64 * 1024 * 1024 {
+            return Err(ConfigError::new(
+                "invalid_containment",
+                "containment.max_entries must be at least 10 and containment.shadow_cache_bytes at most 67108864 (64 MiB).",
+            ));
+        }
+        if let Some(bad) = c
+            .allow
+            .iter()
+            .find(|r| crate::net::Cidr::parse(r).is_none())
+        {
+            return Err(ConfigError::new(
+                "invalid_containment",
+                format!(
+                    "containment.allow holds `{}`, which is not an IP address or CIDR range.",
+                    crate::normalize::sanitize(bad, 64)
+                ),
             ));
         }
         if self.max_sessions < 100 {

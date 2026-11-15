@@ -1,9 +1,11 @@
 //! The engine takes a request and returns a verdict and events.
 
-use crate::config::{Config, ConfigError, IpLogging, Mode};
+use crate::config::{Config, ConfigError, ContainAction, IpLogging, Mode, Trigger};
+use crate::contain::{Contained, Entry, ResponseMeta, Shadow};
 use crate::crypto::{hex, Keys};
 use crate::decoys::{self, Decoys};
 use crate::event::{Draft, EventCtx, EventLog, ReqSummary, SessionInfo, Source};
+use crate::net::{self, Cidr};
 use crate::normalize::{self, is_sensitive, sanitize, Loc, Param};
 use crate::respond;
 use crate::rules::{self, RuleDef, Severity};
@@ -35,6 +37,13 @@ pub struct Request {
     pub body_error: String,
     /// Response status (for `response` calls).
     pub status: u16,
+    /// Response headers (for `response` calls). Hosts send `content-type`,
+    /// `cache-control`, `location` and, as a presence marker only,
+    /// `set-cookie`. They are needed when the host sends `response_body`.
+    pub response_headers: Vec<(String, String)>,
+    /// Response body (for `response` calls). Sent only when the inspection
+    /// asked for it (`capture`), or for a 401 while `learned_401` is false.
+    pub response_body: String,
 }
 
 impl Request {
@@ -43,6 +52,42 @@ impl Request {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
+    }
+
+    pub fn response_header(&self, name: &str) -> Option<&str> {
+        self.response_headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// A request a shared cache could answer: GET without credentials.
+    fn anonymous_get(&self) -> bool {
+        self.method.eq_ignore_ascii_case("GET")
+            && self.header("cookie").is_none()
+            && self.header("authorization").is_none()
+    }
+
+    /// A browser sent this request on behalf of another site, for example an
+    /// auto-submitting form or an image tag on a page the visitor opened.
+    /// Browsers say so with `Sec-Fetch-Site: cross-site` or with an `Origin`
+    /// whose host differs from the request's. Attack tools send neither.
+    fn cross_site(&self) -> bool {
+        if self
+            .header("sec-fetch-site")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("cross-site"))
+        {
+            return true;
+        }
+        let Some(origin) = self.header("origin").map(str::trim) else {
+            return false;
+        };
+        if origin.is_empty() || origin.eq_ignore_ascii_case("null") {
+            return false;
+        }
+        let origin_host = origin.split_once("://").map_or(origin, |(_, h)| h);
+        let host = self.header("host").unwrap_or(&self.host);
+        !origin_host.eq_ignore_ascii_case(host.trim())
     }
 
     pub fn user_agent(&self) -> &str {
@@ -75,6 +120,15 @@ pub struct Inspection {
     /// Every rule this request matched, including repeats that produce no
     /// new event. Hosts can record it per request for analysis.
     pub rules: Vec<&'static str>,
+    /// The machine is contained. In protect mode its request was answered by
+    /// Kagami and never reaches the application.
+    pub contained: bool,
+    /// The host should pass the response headers and body to `response`, so
+    /// the shadow can replay this public response to contained machines.
+    pub capture: bool,
+    /// Machines contained by this request, for enforcers such as an edge
+    /// firewall. Empty in observe mode, where containment is a dry run.
+    pub contain: Vec<Entry>,
     pub events: Vec<String>,
 }
 
@@ -91,6 +145,8 @@ pub struct ResponseOutcome {
 pub struct VerifyOutcome {
     pub valid: bool,
     pub value: Option<String>,
+    /// Machines contained because of a tampered value, for enforcers.
+    pub contain: Vec<Entry>,
     pub events: Vec<String>,
 }
 
@@ -142,6 +198,9 @@ pub struct Engine {
     /// The body of the first JSON 401 the app sent itself. Decoy routes
     /// answer with the same body so their errors match the app's format.
     app_401: Option<String>,
+    contained: Contained,
+    shadow: Shadow,
+    allow: Vec<Cidr>,
 }
 
 /// The part of a user agent that identifies a session. Scanners such as
@@ -237,10 +296,35 @@ impl Engine {
                         "bait_files",
                         (cfg.mode == Mode::Protect && cfg.bait_files).into(),
                     ),
+                    (
+                        "containment",
+                        if !cfg.containment.enabled {
+                            "off".into()
+                        } else if cfg.mode == Mode::Protect {
+                            json!(cfg.containment.action)
+                        } else {
+                            "dry_run".into()
+                        },
+                    ),
                 ]),
             },
         );
         let sessions = Store::new(cfg.max_sessions, cfg.session_ttl_secs);
+        let contained = Contained::new(cfg.containment.max_entries);
+        let shadow_budget = if cfg.containment.enabled
+            && cfg.mode == Mode::Protect
+            && cfg.containment.action == ContainAction::Shadow
+        {
+            cfg.containment.shadow_cache_bytes
+        } else {
+            0
+        };
+        let allow = cfg
+            .containment
+            .allow
+            .iter()
+            .filter_map(|r| Cidr::parse(r))
+            .collect();
         Ok((
             Engine {
                 cfg,
@@ -250,6 +334,9 @@ impl Engine {
                 log,
                 deployment,
                 app_401: None,
+                contained,
+                shadow: Shadow::new(shadow_budget),
+                allow,
             },
             out,
         ))
@@ -265,13 +352,79 @@ impl Engine {
 
     pub fn session_id(&self, ip: &str, ua: &str) -> String {
         let ua = session_user_agent(ua);
-        hex(&self.keys.mac("session", &[ip.as_bytes(), ua.as_bytes()])[..8])
+        let machine = net::machine(ip);
+        hex(&self
+            .keys
+            .mac("session", &[machine.as_bytes(), ua.as_bytes()])[..8])
     }
 
-    /// Keyed hash of the client address alone, shared by every session from
-    /// one machine. Honeytokens, bait files and fake records are keyed on it.
+    /// Keyed hash of the client's machine, shared by every session from it.
+    /// A machine is an IPv4 address or an IPv6 /64. Honeytokens, bait files,
+    /// fake records and containment are keyed on it.
     pub fn source_id(&self, ip: &str) -> String {
-        hex(&self.keys.mac("source", &[ip.as_bytes()])[..8])
+        let machine = net::machine(ip);
+        hex(&self.keys.mac("source", &[machine.as_bytes()])[..8])
+    }
+
+    /// Contain the machine behind `source`, unless its address is allowlisted.
+    /// Emits `containment.started` the first time. Returns the entry for
+    /// enforcers when the containment is new and enforced.
+    /// `sid` is the session whose request triggered it. With `linked` the
+    /// contained machine is a different one, reached through a honeytoken
+    /// that was issued to it.
+    #[allow(clippy::too_many_arguments)]
+    fn start_containment(
+        &mut self,
+        source: &str,
+        ip: &str,
+        reason: &'static str,
+        sid: &str,
+        linked: bool,
+        now: u64,
+        ctx: &EventCtx,
+        out: &mut Vec<String>,
+    ) -> Option<Entry> {
+        let c = &self.cfg.containment;
+        if !c.enabled || (!ip.is_empty() && net::allowed(&self.allow, ip)) {
+            return None;
+        }
+        let target = if ip.is_empty() {
+            String::new()
+        } else {
+            net::machine(ip)
+        };
+        let public = net::parse_ip(ip).is_some_and(|a| net::is_public(&a));
+        let enforced = self.cfg.mode == Mode::Protect;
+        let (action, ttl) = (c.action, c.ttl_secs);
+        let entry = self
+            .contained
+            .contain(source, &target, public, reason, now, ttl * 1000)?;
+        let evidence = ev(&[
+            ("reason", reason.into()),
+            ("action", json!(action)),
+            ("ttl_secs", ttl.into()),
+            ("enforced", enforced.into()),
+            ("contained_source", source.into()),
+            ("linked", linked.into()),
+        ]);
+        let (score, state) = self.sessions.peek(sid);
+        let session = SessionInfo {
+            id: sid.to_string(),
+            source: self.sessions.source_of(sid).unwrap_or(source).to_string(),
+            score,
+            state,
+        };
+        self.log.push(
+            out,
+            now,
+            Draft {
+                rule: &rules::CONTAINMENT_STARTED,
+                session: Some(session),
+                ctx: Some(ctx.clone()),
+                evidence,
+            },
+        );
+        enforced.then_some(entry)
     }
 
     fn ignored(&self, norm_path: &str) -> bool {
@@ -322,6 +475,9 @@ impl Engine {
                 decorate_html: false,
                 decorate_json: false,
                 rules: Vec::new(),
+                contained: false,
+                capture: false,
+                contain: Vec::new(),
                 events: Vec::new(),
             };
         }
@@ -421,9 +577,60 @@ impl Engine {
         let mut events = Vec::new();
         let rules: Vec<&'static str> = hits.0.iter().map(|h| h.rule.id).collect();
         let (score, state) = self.apply(&sid, &source, now, hits.0, &ctx, &mut events);
-        for prefix in linked {
-            self.flag_linked(&prefix, &sid, now, &ctx, &mut events);
+        self.sessions.note_ip(&sid, &req.ip);
+        for prefix in &linked {
+            self.flag_linked(prefix, &sid, now, &ctx, &mut events);
         }
+
+        // Containment. A tripwire contains the machine that tripped it, and a
+        // honeytoken used from elsewhere also contains the machine it was
+        // issued to. Checked after the hits, so the tripping request itself
+        // is already contained.
+        let mut contain = Vec::new();
+        if self.cfg.containment.enabled {
+            let tripwire = rules
+                .iter()
+                .copied()
+                .find(|r| rules::CONTAINMENT_TRIPWIRES.contains(r));
+            let reason = tripwire.or_else(|| {
+                (self.cfg.containment.trigger == Trigger::Flagged && state == State::Flagged)
+                    .then_some(rules::SESSION_FLAGGED.id)
+            });
+            // A cross-site request may be a forgery that makes an innocent
+            // visitor's browser trip the wire. It is still detected and
+            // logged, but it does not contain the visitor's machine.
+            if let Some(reason) = reason.filter(|_| !req.cross_site()) {
+                contain.extend(self.start_containment(
+                    &source,
+                    &req.ip,
+                    reason,
+                    &sid,
+                    false,
+                    now,
+                    &ctx,
+                    &mut events,
+                ));
+            }
+            for prefix in &linked {
+                for (src, ip) in self.sessions.sources_with_prefix(prefix) {
+                    if src != source {
+                        contain.extend(self.start_containment(
+                            &src,
+                            &ip,
+                            rules::HONEYTOKEN_USED.id,
+                            &sid,
+                            true,
+                            now,
+                            &ctx,
+                            &mut events,
+                        ));
+                    }
+                }
+            }
+        }
+        let contained = self.cfg.containment.enabled
+            && self.contained.is_contained(&source, now)
+            && !net::allowed(&self.allow, &req.ip);
 
         let mut inspection = Inspection {
             session: sid,
@@ -435,6 +642,9 @@ impl Engine {
             decorate_html: false,
             decorate_json: false,
             rules,
+            contained,
+            capture: false,
+            contain,
             events,
         };
         if self.cfg.mode == Mode::Protect {
@@ -448,6 +658,64 @@ impl Engine {
             );
         }
         inspection
+    }
+
+    /// The answer for a contained machine. With `block`, a plain 403. With
+    /// `shadow`, a stored public response for the same URL or its bare path,
+    /// or the app's own 404, carrying the same bait as live pages.
+    fn contained_reply(&self, req: &Request, path: &str, source: &str) -> respond::Reply {
+        if self.cfg.containment.action == ContainAction::Block {
+            return respond::Reply {
+                status: 403,
+                headers: vec![("content-type".into(), "text/plain; charset=utf-8".into())],
+                body: "Forbidden".into(),
+            };
+        }
+        let get = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
+        let bare = Shadow::key(path, "");
+        let hit = if get {
+            self.shadow
+                .get(&Shadow::key(path, &req.query))
+                .or_else(|| self.shadow.get(&bare))
+        } else {
+            self.shadow.get(&bare)
+        };
+        let wants_json = path.starts_with("/api/")
+            || req
+                .header("accept")
+                .is_some_and(|a| a.to_ascii_lowercase().contains("json"));
+        let Some(s) = hit.or_else(|| self.shadow.not_found(wants_json)) else {
+            return respond::Reply {
+                status: 404,
+                headers: vec![("content-type".into(), "text/plain; charset=utf-8".into())],
+                body: "Not Found".into(),
+            };
+        };
+        let mut body = s.body.clone();
+        if s.status == 200 {
+            let ct = s.content_type.to_ascii_lowercase();
+            if ct.contains("text/html") {
+                if let Some(b) = self.decorate_for_source(source, path, &body) {
+                    body = b;
+                }
+            } else if ct.contains("json") {
+                if let Some(b) = self.decorate_json(&body) {
+                    body = b;
+                }
+            }
+        }
+        let mut headers = Vec::new();
+        if !s.content_type.is_empty() {
+            headers.push(("content-type".to_string(), s.content_type.clone()));
+        }
+        if !s.location.is_empty() {
+            headers.push(("location".to_string(), s.location.clone()));
+        }
+        respond::Reply {
+            status: s.status,
+            headers,
+            body,
+        }
     }
 
     /// Protect-mode actions. Never called in observe mode.
@@ -477,6 +745,18 @@ impl Engine {
         } else {
             None
         };
+        // Decoys and bait keep answering a contained machine, so it stays
+        // busy with them. Everything else it asks for comes from the shadow
+        // or is refused, and never reaches the application.
+        let reply = reply.or_else(|| i.contained.then(|| self.contained_reply(req, path, source)));
+        i.capture = reply.is_none()
+            && !i.contained
+            && req.anonymous_get()
+            && self.cfg.containment.enabled
+            && self.cfg.containment.action == ContainAction::Shadow
+            && self
+                .shadow
+                .wants(&Shadow::key(path, &req.query), req.now_ms);
         if let Some(r) = reply {
             i.action = Action::Respond {
                 status: r.status,
@@ -615,12 +895,36 @@ impl Engine {
     /// of decoy route 401s.
     pub fn response(&mut self, req: &Request) -> ResponseOutcome {
         let now = req.now_ms;
-        if req.status == 401 && self.app_401.is_none() && usable_401(&req.content_type, &req.body) {
-            self.app_401 = Some(req.body.clone());
+        let content_type = req.response_header("content-type").unwrap_or("");
+        if req.status == 401
+            && self.app_401.is_none()
+            && usable_401(content_type, &req.response_body)
+        {
+            self.app_401 = Some(req.response_body.clone());
         }
         let learned_401 = self.app_401.is_some();
         let sid = self.session_id(&req.ip, req.user_agent());
         let path = normalize::norm_path(&req.path);
+        // Keep public responses for the shadow. The request is checked again
+        // here rather than trusting the host, and Kagami's own replies (decoy
+        // routes and bait files) are never stored.
+        if !req.response_headers.is_empty()
+            && req.anonymous_get()
+            && !self.ignored(&path)
+            && !self.decoys.is_route(&path)
+            && rules::bait_path(&path).is_none()
+        {
+            let meta = ResponseMeta {
+                status: req.status,
+                content_type,
+                location: req.response_header("location").unwrap_or(""),
+                cache_control: req.response_header("cache-control").unwrap_or(""),
+                set_cookie: req.response_header("set-cookie").is_some(),
+                body: &req.response_body,
+            };
+            self.shadow
+                .remember(&Shadow::key(&path, &req.query), &meta, now);
+        }
         if self.ignored(&path) {
             let (score, state) = self.sessions.peek(&sid);
             return ResponseOutcome {
@@ -681,10 +985,19 @@ impl Engine {
         if self.cfg.mode != Mode::Protect {
             return None;
         }
+        let source = self.sessions.source_of(session).unwrap_or(session);
+        self.decorate_for_source(source, path, html)
+    }
+
+    /// `decorate_html` for a known source. The shadow uses it so replayed
+    /// pages carry the same bait as live ones.
+    fn decorate_for_source(&self, source: &str, path: &str, html: &str) -> Option<String> {
+        if self.cfg.mode != Mode::Protect {
+            return None;
+        }
         let path = normalize::norm_path(path);
         let mut out: Option<String> = None;
         if self.cfg.html_decoys && self.decoys.comment_on(&self.keys, &path) {
-            let source = self.sessions.source_of(session).unwrap_or(session);
             if let Some(comment) = self.decoys.html_comment(&self.keys, source) {
                 let variant = self.keys.u32("decoy/placement", &[]);
                 out = decoys::decorate_html(html, &comment, variant);
@@ -719,6 +1032,7 @@ impl Engine {
             return VerifyOutcome {
                 valid: true,
                 value: Some(value),
+                contain: Vec::new(),
                 events: Vec::new(),
             };
         }
@@ -734,11 +1048,44 @@ impl Engine {
         };
         let mut events = Vec::new();
         self.apply(&sid, &source, req.now_ms, vec![hit], &ctx, &mut events);
+        self.sessions.note_ip(&sid, &req.ip);
+        // The request is already inside the application, which is calling
+        // verify, so containment applies from the next request on.
+        let contain = self
+            .start_containment(
+                &source,
+                &req.ip,
+                rules::TAMPER_SEALED.id,
+                &sid,
+                false,
+                req.now_ms,
+                &ctx,
+                &mut events,
+            )
+            .into_iter()
+            .collect();
         VerifyOutcome {
             valid: false,
             value: None,
+            contain,
             events,
         }
+    }
+
+    /// Machines contained right now, soonest expiry first. Holds addresses,
+    /// so hosts must keep it away from untrusted callers.
+    pub fn contained_list(&mut self, now: u64) -> Vec<Entry> {
+        self.contained.list(now)
+    }
+
+    /// End containment for a machine, given its address, IPv6 /64, or source.
+    pub fn release(&mut self, key: &str) -> Vec<Entry> {
+        let machine = net::machine(key);
+        let mut out = self.contained.release(key);
+        if machine != key {
+            out.extend(self.contained.release(&machine));
+        }
+        out
     }
 
     /// Deployment manifest for the host (dashboard, self-test). Contains decoy
@@ -756,6 +1103,13 @@ impl Engine {
                 "json_value": self.decoys.mass_value,
             },
             "sessions": self.sessions.len(),
+            "containment": {
+                "enabled": self.cfg.containment.enabled,
+                "enforced": self.cfg.containment.enabled && self.cfg.mode == Mode::Protect,
+                "trigger": self.cfg.containment.trigger,
+                "action": self.cfg.containment.action,
+                "ttl_secs": self.cfg.containment.ttl_secs,
+            },
         })
     }
 }

@@ -243,3 +243,74 @@ test('form decoys add a hidden field to POST forms and catch an edited value', a
     await server.close();
   }
 });
+
+// Containment. After a tripwire the machine never reaches the app again.
+
+test('a contained machine never reaches the application handlers', async () => {
+  const hits = { home: 0, login: 0, search: 0 };
+  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet });
+  const app = express();
+  app.set('trust proxy', 'loopback');
+  app.use(express.urlencoded({ extended: false }));
+  app.use(mw);
+  app.get('/', (_req, res) => {
+    hits.home++;
+    res.type('html').send(HTML);
+  });
+  app.get('/search', (req, res) => {
+    hits.search++;
+    res.type('html').send(`<!doctype html><html><body>Results for ${String(req.query.q ?? '').replace(/[<>&]/g, '')}</body></html>`);
+  });
+  app.post('/login', (_req, res) => {
+    hits.login++;
+    res.status(401).type('html').send('<!doctype html><html><body>Invalid</body></html>');
+  });
+  app.get('/api/products', (_req, res) => res.json({ products: [] }));
+  app.use((_req, res) => res.status(404).type('html').send('<!doctype html><html><body>Not found</body></html>'));
+  const server = await listen(app);
+  const as = (ip) => (path, init = {}) => fetchRaw(server.base, path, { ...init, headers: { 'x-forwarded-for': ip, ...(init.headers ?? {}) } });
+  try {
+    const visitor = as('198.51.100.40');
+    const home = await visitor('/');
+    await visitor('/search');
+    await visitor('/nothing-here');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const attacker = as('203.0.113.77');
+    const field = mw.kagami.manifest().decoys.json_field;
+    const trip = await attacker(`/api/products?${field}=admin`);
+    assert.equal(trip.status, 404, 'the tripping request is answered by the shadow');
+    const before = { ...hits };
+
+    const shadowHome = await attacker('/');
+    assert.equal(shadowHome.status, 200);
+    assert.equal(shadowHome.body.replace(/<!--[\s\S]*?-->\n?/g, ''), home.body.replace(/<!--[\s\S]*?-->\n?/g, ''), 'same page as the public one');
+    assert.equal((await attacker('/search?q=%27%20OR%201%3D1--')).status, 200, 'replayed from the bare path');
+    assert.equal((await attacker('/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'email=a&password=b' })).status, 404);
+    assert.equal((await attacker('/admin')).body, '<!doctype html><html><body>Not found</body></html>', "the app's own 404");
+    assert.deepEqual(hits, before, 'no handler ran for the contained machine');
+
+    await visitor('/');
+    assert.equal(hits.home, before.home + 1, 'other visitors are unaffected');
+    assert.equal(mw.kagami.contained().length, 1);
+  } finally {
+    await server.close();
+    await mw.kagami.close();
+  }
+});
+
+test('block containment answers 403 and observe mode never contains', async () => {
+  for (const [mode, expected] of [['protect', 403], ['observe', 200]]) {
+    const mw = kagami({ secret: SECRET, mode, decoys: { json: true }, containment: { action: 'block' }, sinks: [], logger: quiet });
+    const server = await listen(buildApp(mw));
+    try {
+      const field = mw.kagami.manifest().decoys.json_field;
+      await fetchRaw(server.base, `/api/me?${field}=admin`);
+      const res = await fetchRaw(server.base, '/');
+      assert.equal(res.status, expected, mode);
+    } finally {
+      await server.close();
+      await mw.kagami.close();
+    }
+  }
+});

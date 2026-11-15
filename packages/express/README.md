@@ -21,6 +21,19 @@ app.use(kagami());   // observe mode by default, which detects and never changes
 - **Observe mode by default.** Responses stay byte-identical until you enable `mode: 'protect'`.
 - **Fails open.** Misconfiguration or internal errors let requests through untouched. Set `KAGAMI_DISABLED=1` to switch Kagami off.
 - **Sealed IDs.** `req.kagami.seal(id)` and `req.kagami.verify(sealed)` turn IDOR attempts into alerts.
+- **Containment.** With `containment: true` in protect mode, a machine that trips a tripwire never reaches your routes again. It is served copies of your public pages instead, and enforcers can block it at your firewall, WAF or CDN.
+
+```js
+import { blocklistFile, kagami } from '@agenticslabs/kagami-express';
+
+app.use(kagami({
+  mode: 'protect',
+  containment: true,
+  enforcers: [blocklistFile({ path: '/etc/nginx/kagami-blocked.conf', format: 'nginx' })],
+}));
+```
+
+Behind Cloudflare, use `cloudflareClientIp()` from [`@agenticslabs/kagami-cloudflare`](https://www.npmjs.com/package/@agenticslabs/kagami-cloudflare) as `clientIp`, so Kagami sees the visitor's address and cannot be fooled by a forged `CF-Connecting-IP`.
 
 The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/kagami
 

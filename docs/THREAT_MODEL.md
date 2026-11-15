@@ -34,7 +34,24 @@ the mitigations and the residual risk.
 | The JSON decoy field breaks strict clients | It is off by default. It is inserted at the start of the object and ignored by tolerant parsers. **Residual risk.** Clients with strict schema validation (`additionalProperties: false`) should not enable it. |
 | An attacker uses Kagami to DoS the app with an event flood or session flood | Events are deduplicated per rule and session, there is a per-minute event budget with a separate critical budget, the session store is bounded with clean sessions evicted first, and the async queue is bounded. |
 
-### 3.2 Against detection (A1, A2)
+### 3.2 Against containment
+
+Containment cuts a machine off from the application and can push the address to an edge firewall. The main risk
+is containing someone who is not an attacker.
+
+| Threat | Mitigation |
+|---|---|
+| An attacker gets an innocent address contained by forging a client address header | Kagami contains the address the adapter gives it, so the adapter must not trust forwarding headers from untrusted peers. Behind Cloudflare, `cloudflareClientIp()` trusts `CF-Connecting-IP` only from Cloudflare's published ranges. Forged values that no proxy writes also raise `client.forged_forwarding`. |
+| An attacker makes a real visitor's browser trip a wire, for example a hidden form on another site that posts a changed decoy field, or an image tag that loads a decoy route | A request marked `Sec-Fetch-Site: cross-site`, or carrying an `Origin` whose host differs from the request's, is logged but never contains its sender. **Residual risk.** A browser that sends neither header on a cross-site GET (very old browsers) could still be contained by a forged image request. Containment expires and `release` ends it early. |
+| Several people share one address (an office NAT, carrier-grade NAT, a VPN exit) and one of them attacks | Everyone behind that address is contained with the attacker. Only tripwires contain by default, so this needs a real attack from that address. Use `allow` for your own offices and known shared exits. Containment expires after one day by default, and carrier-grade NAT addresses are never pushed to edge enforcers. |
+| A false positive from accumulated signals, such as a customer who searches for `<script>` | Signals alone never contain unless `trigger: 'flagged'` is chosen. Tripwires are actions honest visitors cannot take by accident. |
+| The shadow leaks another visitor's data to a contained attacker | Only responses a shared HTTP cache could store are kept. Requests with cookies or `Authorization`, responses with `Set-Cookie` or `Cache-Control: private` or `no-store` are never stored, and a page that reflects another visitor's query string is replayed only to a request with the same query string. |
+| The shadow tells the attacker it has been contained | The shadow replays the app's own public responses and 404 pages with the same bait as live ones. **Residual risk.** An attacker comparing many requests may notice that query parameters stop having effects. By then it is already cut off from the application. |
+| An attacker evades containment by changing address | A new address is a new machine. Containment covers an IPv6 /64, a honeytoken used from a new address also contains it, and tripwires usually fire within the first few dozen requests of a new machine. **Residual risk.** An attacker with many fresh addresses that never touches a tripwire stays uncontained. |
+| An enforcer credential leaks | Enforcer credentials stay on the host. The Cloudflare enforcer needs only the "Account Filter Lists Edit" permission, reads its token from the environment, never logs it, and only changes list items it created itself. Enforcers never receive private, loopback, documentation or carrier-grade NAT addresses. |
+| An edge list fills up or the provider is unreachable | Enforcers run off the request path and fail without affecting requests. Failures are counted in `stats().enforcerErrors`. Entries expire, and the Cloudflare enforcer removes expired and duplicate entries every ten minutes. |
+
+### 3.3 Against detection (A1, A2)
 
 | Threat | Mitigation |
 |---|---|
@@ -49,7 +66,7 @@ the mitigations and the residual risk.
 | The attacker avoids every tripwire (A2) | **This is the intended dilemma.** An agent that never uses found credentials, never changes IDs, never sets unfamiliar fields and never probes files has given up most of its methods. Kagami does not claim to detect an attacker who behaves exactly like a normal user. |
 | Evasion of payload signatures through encodings, comments or case | Kagami applies multi-layer percent decoding, case folding, SQL comment removal and whitespace collapsing. **Residual risk.** Signature evasion is always possible. Payload rules are signals and not the basis of detection. |
 
-### 3.3 Against the audit trail (A3, A4)
+### 3.4 Against the audit trail (A3, A4)
 
 | Threat | Mitigation |
 |---|---|
@@ -62,7 +79,7 @@ the mitigations and the residual risk.
 | Log tampering after a compromise (A4) | Each instance keeps a SHA-256 hash chain that `kagami verify-log` can verify. **Residual risk.** An attacker with write access can truncate the *end* of a log without detection, or rewrite the entire chain. Ship logs off the host promptly (webhook or SIEM) for stronger guarantees. |
 | A webhook redirect to an internal address | Redirects are not followed (`redirect: 'manual'`), and HTTPS is required except for localhost. |
 
-### 3.4 Against the secret
+### 3.5 Against the secret
 
 | Threat | Mitigation |
 |---|---|
@@ -70,11 +87,14 @@ the mitigations and the residual risk.
 | Secret exposure through the manifest | `manifest()` is a host-side API only and no adapter exposes it over HTTP. The documentation says it must never be exposed. |
 | The secret in config files | It is read from `KAGAMI_SECRET` by default, config is never logged, and the Rust `Config` type deliberately does not implement `Debug`. |
 
-### 3.5 Privacy
+### 3.6 Privacy
 
 Kagami processes request metadata, which includes personal data such as IP addresses. By default no data leaves the
 host unless a sink is configured. IP logging can be set to `hashed` or `omit`. Request bodies are inspected in memory
 and never logged. Only short, sanitised snippets of *matched* attack payloads are recorded, with sensitive fields redacted.
+With containment on, the addresses of contained machines are kept in memory for the containment period and passed to
+the enforcers you configure, which may send them to a third party such as Cloudflare. The shadow keeps copies of
+public responses in memory only.
 
 ## 4. Out of scope
 
