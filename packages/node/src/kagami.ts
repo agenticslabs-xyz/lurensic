@@ -1,5 +1,5 @@
 /**
- * The framework-agnostic Kagami guard. Framework adapters (Express, Next.js,
+ * The framework-agnostic Kagami guard. Framework adapters (Express, Hono,
  * Fastify, ...) translate their request objects into `HttpRequest` and call
  * `inspect` / `response` / `decorate*`.
  *

@@ -341,8 +341,8 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 ## 12. Roadmap
 
 1. **Utsusemi.** A richer shadow that also answers personalised routes for contained machines with consistent fake data.
-2. More adapters (Next.js, Fastify, FastAPI, Django, Go) with a shared conformance vector suite.
-3. A shared session store (Redis) for multi-instance deployments.
+2. A portable runtime for Bun, Deno and Cloudflare Workers, a web-standard adapter for `fetch(request)` apps, and a Hono adapter. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
+3. An optional `store` setting that accepts any key-value store with expiry (Workers KV, Deno KV, Netlify Blobs, Redis), so containment survives restarts and is shared across instances. Kagami keeps no platform code for it.
 4. Off-site honeytoken monitoring (cloud canary credentials) and a forged JWT tripwire.
 5. `kagami doctor` (route collision check, config lint) and a local dashboard.
 6. A public evasion challenge and a live benchmark scoreboard.

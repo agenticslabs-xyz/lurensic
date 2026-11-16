@@ -93,7 +93,7 @@ flowchart TB
 | **@agenticslabs/kagami-express** | Express middleware. Translates requests, applies decoys and containment, and passes public responses to the shadow. | [`packages/express`](packages/express) |
 | **Demo shop and benchmarks** | An ordinary web shop used to test Kagami against live AI pentest agents, optionally with planted real bugs. | [`examples/demo-shop`](examples/demo-shop), [`docs/BENCHMARK.md`](docs/BENCHMARK.md) |
 
-You only install `@agenticslabs/kagami-express`, which brings the rest with it. Other Node frameworks (Next.js, Fastify) are next, and other languages can plug into the same engine later. See [Writing an adapter](docs/guides/new-adapter.md).
+You only install `@agenticslabs/kagami-express`, which brings the rest with it. A web-standard adapter for any app with a `fetch(request)` handler, and a Hono adapter, are next. Other frameworks and languages can plug into the same engine later. See [Writing an adapter](docs/guides/new-adapter.md).
 
 ## Quick start
 
@@ -255,10 +255,11 @@ pnpm demo              # demo shop on http://localhost:41837 in protect mode
 
 ## Roadmap
 
-- A Next.js adapter, then Fastify and other languages sharing the one engine
+- Run the runtime on Bun, Deno and Cloudflare Workers as well as Node, with a web-standard adapter for any app with a `fetch(request)` handler
+- A Hono adapter
+- An optional `store` setting that takes the key-value store your platform already provides, such as Workers KV, Deno KV, Netlify Blobs or Redis, so containment survives restarts and holds across serverless and edge instances
 - Presets for hosts that pass the visitor address in their own way, starting with Render
-- An edge adapter on the web-standard Request and Response API, for Cloudflare Workers, Vercel, Netlify, Deno and Bun
-- A shared store so containment holds across serverless and edge instances
+- Fastify and other languages, when people ask for them
 - **Utsusemi**, a richer shadow that also answers personalised routes with consistent fake data
 - A public **"evade Kagami"** challenge with a live scoreboard
 

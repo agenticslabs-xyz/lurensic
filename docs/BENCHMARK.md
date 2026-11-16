@@ -20,7 +20,7 @@ Kagami's claims are only worth what can be measured and reproduced. This documen
   page) and a reflected cross-site scripting flaw in the category filter of `/products`. Both are harmless to the
   host, because the traversal reads only an in-memory file system. The shop marks every request that runs the
   vulnerable code with exploit input in its access log, which is the ground truth for question 7.
-- Additional targets as adapters ship, such as a Next.js app and a FastAPI app.
+- Additional targets as adapters ship, such as a Hono app on Cloudflare Workers.
 
 ## Containment comparison
 
