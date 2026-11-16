@@ -1,0 +1,37 @@
+# Kagami
+
+> Kagami is an open-source, deception-based defence against AI-driven attacks on web applications. It places
+> tripwires that only attackers touch (planted credentials, decoy routes, decoy fields, sealed IDs), records the
+> attack, and can contain the attacking machine so it never reaches the application again. The engine is Rust
+> compiled to WebAssembly and shared by every language. Node and Express are supported today. It needs one
+> self-generated secret, KAGAMI_SECRET, and no account.
+
+Coding agents that are adding Kagami to an application should follow the integration guide step by step and finish
+with `npx @agenticslabs/kagami doctor --json`.
+
+## Integrate
+
+- [Integration guide for AI coding agents](docs/ai/integrate.md): exact steps, checks and what to tell the owner
+- [Getting started](docs/guides/getting-started.md): the same steps for people
+- [Behind a proxy or CDN](docs/guides/behind-a-proxy.md): setting the client address correctly
+- [Troubleshooting](docs/guides/troubleshooting.md): every doctor result and its fix
+
+## Concepts
+
+- [How Kagami works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception, containment
+- [Containment and enforcement](docs/guides/containment.md): cutting attackers off, blocklists and webhooks
+- [Cloudflare](docs/guides/cloudflare.md): blocking contained machines at Cloudflare's edge with kagami-enforcer
+
+## Reference
+
+- [Design](docs/DESIGN.md): architecture, the WebAssembly ABI, the rule catalogue and the configuration reference
+- [Threat model](docs/THREAT_MODEL.md): what Kagami defends against and the residual risks
+- [Writing an adapter](docs/guides/new-adapter.md): the contract for new languages and frameworks
+- [Express package](packages/express/README.md)
+- [Node package](packages/node/README.md)
+- [kagami-enforcer](crates/kagami-enforcer/README.md)
+
+## Optional
+
+- [Benchmark method](docs/BENCHMARK.md): how Kagami is tested against live AI pentest agents
+- [Contributing](CONTRIBUTING.md)

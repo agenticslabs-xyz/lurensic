@@ -47,22 +47,26 @@ Existing defences fall into two groups.
 
 ## 4. Architecture
 
+```mermaid
+flowchart TB
+    subgraph host["Host process (Node today, Python and Go later)"]
+        AD["Adapter, for example Express<br/>maps requests and responses,<br/>decorates send(), captures public responses"]
+        RT["Runtime, @agenticslabs/kagami<br/>fail-open wrapper, kill switch, secret,<br/>JSON envelope to and from the WASM ABI"]
+        CORE["kagami-core (WASM)<br/>rules, decoys, honeytokens, sessions,<br/>containment, shadow, client address, audit log<br/>no imports, so no clock, no I/O, no randomness"]
+        SINKS["Event sinks<br/>stdout, file, webhook, Slack"]
+        ENF["Enforcers<br/>blocklist file, webhook, callback"]
+        AD --> RT --> CORE
+        RT --> SINKS
+        RT --> ENF
+    end
+    ENF --> FILE[("JSON blocklist")]
+    FILE --> KE["kagami-enforcer<br/>separate process, one for every language"]
+    KE --> EDGE["Edge provider<br/>Cloudflare IP list and WAF rule"]
 ```
-host process (Node today, Python and Go later)
 
-  request
-     |
-     v
-  adapter (Express)                 @agenticslabs/kagami
-    maps req and res       -->        fail-open wrapper, kill switch, secret
-    decorates send()                  JSON envelope to and from the WASM ABI
-                                      event pipeline --> sinks (stdout, file, webhook, Slack)
-                                           |
-                                           v
-                                      kagami-core (WASM)
-                                        rules, decoys, honeytokens, sessions, audit log
-                                        no imports, so no clock, no I/O and no randomness
-```
+Decisions are made only in the core. The runtime moves data and does all I/O off the request path. Edge providers
+are handled by `kagami-enforcer`, a separate Rust program that reads the JSON blocklist any adapter writes, so a
+provider is implemented once for every language.
 
 ### 4.1 Core ABI (v1)
 
@@ -77,24 +81,26 @@ The WebAssembly module exports four functions and imports none.
 
 The host sends `{"op": "...", "args": {...}}`. The core answers with `{"ok": true, "result": ...}` or
 `{"ok": false, "error": {"code", "message"}}`. The operations are `init`, `inspect`, `response`,
-`decorate_html`, `decorate_json`, `seal`, `verify_sealed`, `manifest` and `version`.
+`decorate_html`, `decorate_json`, `seal`, `verify_sealed`, `manifest`, `contained`, `release` and `version`.
 
 The core takes the time as an argument (`now_ms`) and has no I/O, so it is deterministic. The same
 inputs produce the same outputs in every host, which makes cross-language conformance testing possible.
 
-A new language adapter needs about 100 lines of code. It loads the module, implements the envelope call,
-maps the framework's request type and runs the event pipeline. Python (wasmtime), Go (wazero, no cgo),
-Java (Chicory) and .NET (wasmtime) all fit this model.
+A new language needs a small runtime that loads the module, implements the envelope call and runs the event and
+enforcer pipelines, plus a thin adapter per framework. Python (wasmtime), Go (wazero, no cgo), Java (Chicory) and
+.NET (wasmtime) all fit this model. The full contract is in [Writing an adapter](guides/new-adapter.md).
 
 ### 4.2 Request lifecycle
 
-1. **inspect.** The adapter passes the method, host, path, raw query, headers and body (truncated to `maxBodyBytes`, 16 KiB by default). The core then does the following.
-   - It derives the session id as `HMAC(secret, "session", ip, user_agent)[:8]`.
+1. **inspect.** The adapter passes the method, host, path, raw query, headers, body (truncated to `maxBodyBytes`, 16 KiB by default) and the connection's raw `peer` address. The core then does the following.
+   - With `client_ip` configured, it resolves the client address from `peer`, walking `X-Forwarded-For` back only through trusted proxies and trusting `CF-Connecting-IP` only from Cloudflare's ranges.
+   - It derives the session id as `HMAC(secret, "session", machine, user_agent)[:8]`, where a machine is an IPv4 address or an IPv6 /64.
    - It normalises the input (multi-layer percent decoding, case folding, comment and whitespace collapsing) and extracts parameters from the path, query, form or JSON body, cookies and headers.
    - It runs the rules, applies scores and appends events.
-   - In protect mode it decides whether to answer with a decoy, delay the response (tarpit) or decorate it.
+   - It contains the machine if a tripwire fired (section 6.1).
+   - In protect mode it decides whether to answer with a decoy, a bait file or the shadow, delay the response (tarpit), decorate it, or ask the adapter to capture it for the shadow.
 2. **decorate.** If requested, the adapter passes an HTML or JSON body and the core returns the decorated body, or `null` to leave it alone.
-3. **response.** After the response finishes, the adapter reports the status. This drives the behavioural rules (bursts of 404 responses and bursts of 401 or 403 responses).
+3. **response.** After the response finishes, the adapter reports the status. This drives the behavioural rules (bursts of 404 responses and bursts of 401 or 403 responses). When the inspection asked for it, the adapter also passes the response headers and original body, which the shadow may keep.
 
 ### 4.3 Sessions and scoring
 
@@ -325,6 +331,7 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `tarpit` | `false` | `true` or `{ minMs, maxMs }` |
 | `thresholds` | `{ suspicious: 30, flagged: 70 }` | |
 | `ignorePaths` | `[]` | Paths skipped entirely, such as health checks and static assets |
+| `clientAddress` | none | `{ trustedProxies, cloudflare, cloudflareRanges }`. The core resolves the client address from the peer and trusted headers. See [Behind a proxy or CDN](guides/behind-a-proxy.md). |
 | `ipLogging` | `raw` | `raw`, `hashed` (keyed per deployment) or `omit` |
 | `sinks` | `[consoleSink()]` | |
 | `containment` | off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |

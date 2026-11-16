@@ -18,6 +18,14 @@ rustup target add wasm32-unknown-unknown
 pnpm install
 pnpm test              # Rust tests, WASM build, all JS suites
 cargo clippy --all-targets -- -D warnings
+pnpm test:enforcer     # the standalone enforcer
+```
+
+The enforcer's TLS library needs a C compiler. On Linux and macOS that is usually present. On Windows, use the MSVC
+Rust toolchain, or run the enforcer's tests in a container.
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work -e CARGO_TARGET_DIR=/work/target/linux rust:1-bookworm   sh -c "cargo test -p kagami-enforcer && cargo clippy -p kagami-enforcer --all-targets -- -D warnings"
 ```
 
 ## Adding a detection rule
@@ -28,9 +36,14 @@ cargo clippy --all-targets -- -D warnings
 
 ## Adding a language adapter
 
-Implement the ABI described in [section 4.1 of docs/DESIGN.md](docs/DESIGN.md#41-core-abi-v1), map the framework's
-request, run the event pipeline off the request path, and reproduce the Express adapter's test suite (byte identity,
-fail-open behaviour, decoration and seals).
+Follow [Writing an adapter](docs/guides/new-adapter.md). It describes the contract with the engine, the requests a
+framework rejects, the JSON blocklist every adapter writes, and the test suites every adapter must pass.
+
+## Adding an enforcer provider
+
+Add a module to `crates/kagami-enforcer` next to `cloudflare.rs`. A provider reads the same parsed blocklist and
+must only change entries it created, never push private addresses, keep its credentials out of logs and errors, and
+come with tests against an in-memory model of the provider's API.
 
 ## Commits
 

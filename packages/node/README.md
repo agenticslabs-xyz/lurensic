@@ -17,6 +17,7 @@ const verdict = kagami.inspect({ ip, method, host, path, query, headers, body })
 
 ```bash
 npx @agenticslabs/kagami secret                    # generate a deployment secret
+npx @agenticslabs/kagami doctor --url http://localhost:3000   # check the setup (add --json for agents)
 npx @agenticslabs/kagami verify-log events.jsonl   # check a log's hash chain
 ```
 
