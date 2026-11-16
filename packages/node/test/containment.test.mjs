@@ -148,6 +148,30 @@ test('blocklistFile writes atomically and survives a restart', async () => {
   await reopened.close();
 });
 
+// The firewall guide syncs a remote list from onChange with entries(). A
+// remote call that fails once must not stop later syncs.
+test('blocklistFile keeps working after a failed onChange, and entries() holds only live machines', async () => {
+  const synced = [];
+  let failNext = true;
+  const file = blocklistFile({
+    path: join(dir, 'synced.json'),
+    format: 'json',
+    onChange: () => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('remote list unavailable');
+      }
+      synced.push(file.entries().map((m) => m.target).sort());
+    },
+  });
+  const now = Date.now();
+  const m = (target, until) => ({ source: target, target, public: true, reason: 'decoy.param', since: now, until });
+  await assert.rejects(file.contain([m('8.8.8.8', now + 60_000)]), /remote list unavailable/);
+  await file.contain([m('8.8.4.4', now + 60_000), m('9.9.9.9', now - 1)]);
+  assert.deepEqual(synced, [['8.8.4.4', '8.8.8.8']], 'the second sync carries both live machines and drops the expired one');
+  await file.close();
+});
+
 test('webhookEnforcer signs its payload and reports releases', async () => {
   const received = [];
   const server = createServer((req, res) => {

@@ -33,11 +33,10 @@ framework rejects, the JSON blocklist every adapter writes, and the test suites 
 
 ## Adding an enforcer
 
-Enforcers live in `packages/node/src`, next to `cloudflare/`. An enforcer receives contained machines through the
-`Enforcer` interface, runs off the request path, must only change entries it created, must never push private
-addresses unless asked, keeps its credentials out of logs and errors, and comes with tests against an in-memory model
-of the provider's API. Built-in enforcers that need credentials switch on from environment variables, as Cloudflare
-does.
+Kagami ships only provider-neutral enforcers, in `packages/node/src/enforce.ts`. Integrations with a particular
+firewall, CDN or WAF belong in the recipes in `docs/guides/firewall.md`, not in the package. A new built-in enforcer
+receives contained machines through the `Enforcer` interface, runs off the request path, must never push private
+addresses unless asked, keeps any credentials out of logs and errors, and comes with tests.
 
 ## Commits
 

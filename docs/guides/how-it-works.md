@@ -109,7 +109,6 @@ Containment inside the app protects the app. Enforcers push the same decision to
 ```mermaid
 flowchart LR
     K["Kagami in the app"] -->|"each contained machine"| E{"Enforcers"}
-    E --> CF["Cloudflare IP list<br/>blocked by a WAF rule"]
     E --> F["blocklistFile<br/>plain, nginx or JSON"]
     E --> W["webhookEnforcer<br/>your endpoint"]
     F --> N["nginx, ipset, iptables,<br/>AWS WAF import"]

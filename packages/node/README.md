@@ -19,7 +19,6 @@ const verdict = kagami.inspect({ ip, method, host, path, query, headers, body })
 npx @agenticslabs/kagami secret                    # generate a deployment secret
 npx @agenticslabs/kagami doctor --url http://localhost:3000   # check the setup (add --json for agents)
 npx @agenticslabs/kagami verify-log events.jsonl   # check a log's hash chain
-npx @agenticslabs/kagami cloudflare setup --zone example.com   # create the Cloudflare IP list and WAF rule (also status, sweep)
 ```
 
 ## Sinks
@@ -36,8 +35,8 @@ so contained machines can be served copies of public pages.
 
 Enforcers receive each newly contained machine, off the request path. The package includes
 `blocklistFile` (plain, nginx or JSON, written atomically, kept across restarts), `webhookEnforcer`
-(HMAC-signed) and `callbackEnforcer`. A Cloudflare enforcer is added by itself when `CLOUDFLARE_API_TOKEN`,
-`CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID` are set. Write your own by implementing the `Enforcer` interface.
+(HMAC-signed) and `callbackEnforcer`. Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in
+[Blocking at your firewall or CDN](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/firewall.md). Write your own by implementing the `Enforcer` interface.
 `kagami.contained()` lists contained machines and `kagami.release(ip)` ends a containment early.
 
 The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/kagami

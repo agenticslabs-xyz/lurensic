@@ -8,7 +8,7 @@ Instructions for AI coding agents and people changing Kagami itself. To add Kaga
 | Path | What it is |
 |---|---|
 | `crates/kagami-core` | The engine in Rust, compiled to WebAssembly. All detection, deception and containment logic lives here and nowhere else. |
-| `packages/node` | `@agenticslabs/kagami`, the Node runtime, sinks, enforcers (including Cloudflare) and CLI |
+| `packages/node` | `@agenticslabs/kagami`, the Node runtime, sinks, enforcers and CLI |
 | `packages/express` | `@agenticslabs/kagami-express`, the Express adapter |
 | `examples/demo-shop` | The benchmark target and the attacker persona tests |
 | `scripts` | Benchmark round runner and report generator |

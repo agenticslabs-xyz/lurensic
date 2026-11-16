@@ -41,8 +41,8 @@ For every request the adapter does the following.
 Also provide `seal` and `verify` to the application, a kill switch (`KAGAMI_DISABLED`), and a way to read the
 contained list and release a machine.
 
-The runtime should offer the same enforcers as the Node runtime, including Cloudflare switched on from the same
-environment variables, so a user installs one package and runs nothing else.
+The runtime should offer the same provider-neutral enforcers as the Node runtime, a blocklist file, a signed webhook
+and a callback, so a user installs one package and runs nothing else.
 
 ## Requests rejected by the framework
 

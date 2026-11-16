@@ -35,8 +35,8 @@ flowchart LR
     K -->|"edits a decoy field<br/>or a sealed ID"| T
     T --> C["Machine contained"]
     C --> S["Shadow<br/>copies of public pages only"]
-    C --> E["Enforcers<br/>Cloudflare, blocklist file,<br/>webhook"]
-    E --> EDGE["Your firewall or CDN<br/>for example Cloudflare"]
+    C --> E["Enforcers, optional<br/>blocklist file, webhook,<br/>callback"]
+    E --> EDGE["Your firewall, CDN or WAF"]
 ```
 
 1. **Detect.** Kagami inspects every request. Payloads, scanners and enumeration raise a session's score.
@@ -73,7 +73,7 @@ tested it hundreds of times.
 ## Components
 
 You install one package. Inside it, Kagami is a detection engine written once in Rust, a runtime that runs it in
-Node, and a thin adapter for your framework. Containment, alerts and Cloudflare blocking are all built in.
+Node, and a thin adapter for your framework. Containment and alerts are built in, and contained machines can be handed to any firewall or CDN you already use.
 
 ```mermaid
 flowchart TB
@@ -81,16 +81,15 @@ flowchart TB
         AD["Framework adapter<br/>@agenticslabs/kagami-express"] --> NODE["Language runtime<br/>@agenticslabs/kagami"]
         NODE --> CORE["kagami-core<br/>Rust engine compiled to WebAssembly"]
         NODE --> SINKS["Event sinks<br/>stdout, file, webhook, Slack"]
-        NODE --> ENF["Enforcers<br/>Cloudflare, blocklist file, webhook"]
+        NODE --> ENF["Enforcers<br/>blocklist file, webhook, callback"]
     end
-    ENF --> CF["Cloudflare IP list<br/>and WAF rule"]
-    ENF --> FW["Your firewall or WAF<br/>nginx, AWS, Azure, ..."]
+    ENF --> FW["Your firewall, CDN or WAF<br/>nginx, Cloudflare, AWS, ..."]
 ```
 
 | Component | What it is | Where |
 |---|---|---|
 | **kagami-core** | The detection and deception engine. Rust compiled to WebAssembly with no imports, so it has no clock, network or file access. Every language runs the same engine. | [`crates/kagami-core`](crates/kagami-core) |
-| **@agenticslabs/kagami** | The Node runtime. Loads the engine, fails open, delivers events to sinks and contained machines to enforcers (Cloudflare, blocklist file, webhook), and provides the `kagami` CLI (`secret`, `doctor`, `cloudflare`, `verify-log`). | [`packages/node`](packages/node) |
+| **@agenticslabs/kagami** | The Node runtime. Loads the engine, fails open, delivers events to sinks and contained machines to enforcers (blocklist file, webhook, callback), and provides the `kagami` CLI (`secret`, `doctor`, `verify-log`). | [`packages/node`](packages/node) |
 | **@agenticslabs/kagami-express** | Express middleware. Translates requests, applies decoys and containment, and passes public responses to the shadow. | [`packages/express`](packages/express) |
 | **Demo shop and benchmarks** | An ordinary web shop used to test Kagami against live AI pentest agents, optionally with planted real bugs. | [`examples/demo-shop`](examples/demo-shop), [`docs/BENCHMARK.md`](docs/BENCHMARK.md) |
 
@@ -148,7 +147,7 @@ The [getting started guide](docs/guides/getting-started.md) walks through each s
 |---|---|---|
 | run Kagami | `KAGAMI_SECRET` | A random value you generate yourself with `npx @agenticslabs/kagami secret`. Not an account or an API key. No sign-up, no service and no telemetry. |
 | get alerts by webhook or Slack | A webhook URL, and a signing secret you choose | Optional |
-| block contained machines at Cloudflare | `CLOUDFLARE_API_TOKEN` (one permission, **Account Filter Lists Edit**), `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID` | Optional. `npx @agenticslabs/kagami cloudflare setup --zone <your domain>` creates the list and the WAF rule once, with a setup token you delete afterwards. Then Kagami does the rest. Works on every Cloudflare plan, including Free. See the [Cloudflare guide](docs/guides/cloudflare.md). |
+| also block contained machines at your firewall or CDN | Whatever that firewall or CDN needs | Optional. Kagami hands you the list as a file, a webhook or a callback. Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in [Blocking at your firewall or CDN](docs/guides/firewall.md). |
 
 Without a secret in production, Kagami switches itself off and lets requests through, so a missing setting can
 never take your site down.
@@ -226,7 +225,7 @@ containment on. Live rounds of the same comparison are next. The method is in [d
 | [Getting started](docs/guides/getting-started.md) | Installing Kagami in an Express app, step by step |
 | [How Kagami works](docs/guides/how-it-works.md) | Diagrams of the request lifecycle, tripwires, containment and the shadow |
 | [Containment and enforcement](docs/guides/containment.md) | Cutting attackers off, blocklists, webhooks, allowlists and release |
-| [Cloudflare](docs/guides/cloudflare.md) | Blocking contained machines at Cloudflare's edge |
+| [Blocking at your firewall or CDN](docs/guides/firewall.md) | Recipes for nginx, host firewalls, Cloudflare and cloud WAFs |
 | [Behind a proxy or CDN](docs/guides/behind-a-proxy.md) | Getting the real client address right |
 | [Troubleshooting](docs/guides/troubleshooting.md) | What each `kagami doctor` result means |
 | [Writing an adapter](docs/guides/new-adapter.md) | Bringing Kagami to another language or framework |
@@ -237,7 +236,7 @@ containment on. Live rounds of the same comparison are next. The method is in [d
 
 ```
 crates/kagami-core       The engine, Rust compiled to WebAssembly (detection, decoys, containment, audit log)
-packages/node            @agenticslabs/kagami, the Node runtime, event sinks, enforcers (including Cloudflare) and CLI
+packages/node            @agenticslabs/kagami, the Node runtime, event sinks, enforcers and CLI
 packages/express         @agenticslabs/kagami-express, the Express middleware
 examples/demo-shop       The benchmark target and the attacker persona tests
 docs/                    Guides, design, threat model, benchmark method, AI integration guide
@@ -256,12 +255,11 @@ pnpm demo              # demo shop on http://localhost:41837 in protect mode
 
 ## Roadmap
 
-- Built-in AWS WAF and Azure WAF enforcers, configured the same way as Cloudflare
-- A shared store (Redis or similar) so containment holds across serverless instances, such as AWS Lambda, Azure Functions and Vercel
-- Next.js and Fastify adapters, then other languages sharing the one engine
-- Reporting contained machines to Cloudflare's Bot Feedback Loop (Enterprise Bot Management)
+- A Next.js adapter, then Fastify and other languages sharing the one engine
+- Presets for hosts that pass the visitor address in their own way, starting with Render
+- An edge adapter on the web-standard Request and Response API, for Cloudflare Workers, Vercel, Netlify, Deno and Bun
+- A shared store so containment holds across serverless and edge instances
 - **Utsusemi**, a richer shadow that also answers personalised routes with consistent fake data
-- Running Kagami at the edge as a Cloudflare Worker
 - A public **"evade Kagami"** challenge with a live scoreboard
 
 ## Responsible use

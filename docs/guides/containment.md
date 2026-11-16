@@ -116,8 +116,7 @@ The `kagami-signature` header is `t=<unix seconds>,v1=<hex HMAC-SHA256 of t + ".
 Enforcers only receive public addresses unless you pass `includePrivate: true`. A failing enforcer never affects
 requests. Its failures are counted in `kagami.stats().enforcerErrors`.
 
-Cloudflare is built in. Set three environment variables and Kagami adds contained machines to a Cloudflare IP list by
-itself. See [Cloudflare](cloudflare.md).
+Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in [Blocking at your firewall or CDN](firewall.md).
 
 ## Managing contained machines
 

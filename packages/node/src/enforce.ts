@@ -189,7 +189,9 @@ export function blocklistFile(opts: {
   };
 
   const persist = (): Promise<void> => {
-    writing = writing.then(async () => {
+    // A failed write or onChange must not stop later writes, so the chain
+    // continues after a rejection. The caller still sees this write's error.
+    writing = writing.catch(() => undefined).then(async () => {
       const now = Date.now();
       for (const [k, m] of entries) if (m.until <= now) entries.delete(k);
       const list = [...entries.values()];

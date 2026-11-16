@@ -120,25 +120,15 @@ If the app hands record IDs to clients, offer to seal them with `req.kagami.seal
 
 ## Step 7. Edge blocking, optional
 
-If the app is behind Cloudflare and the owner wants attackers blocked at the edge, nothing extra is installed. The
-owner does these steps. Do not create tokens or run setup with a token yourself unless the owner asks you to.
+Containment inside the app already protects it. Only add edge blocking when the owner asks for it, and mention that
+an edge block tells the attacker it was caught, while the shadow does not.
 
-1. The owner runs `npx @agenticslabs/kagami cloudflare setup` with no token. It prints which two tokens to create and a
-   link to the Create Token page.
-2. With the one-time setup token in `CLOUDFLARE_API_TOKEN`, the owner runs
-   `npx @agenticslabs/kagami cloudflare setup --zone <their domain>`. It creates the IP list and the WAF custom rule,
-   and prints `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID`. It is safe to run again.
-3. The owner deletes the setup token and gives the app a runtime token with only **Account Filter Lists Edit**.
+Kagami ships no provider integrations. Follow the matching recipe in
+[Blocking at your firewall or CDN](../guides/firewall.md), which covers nginx, host firewalls, Cloudflare and cloud
+WAFs. The recipe code goes into the owner's app, next to the Kagami middleware.
 
-The app then needs three environment variables, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and
-`KAGAMI_CLOUDFLARE_LIST_ID`, plus `KAGAMI_CONTAINMENT=on` and `clientAddress: { cloudflare: true }` from step 4. Kagami
-adds the Cloudflare enforcer by itself when they are set.
-
-If setup reports that it could not add the rule, pass on its message to the owner. It names the missing permission and
-prints the rule to add by hand.
-
-Never ask for broader token permissions for the runtime token, never put a token in source files, and follow the
-[Cloudflare guide](../guides/cloudflare.md) for the details.
+The owner creates any provider token and the rule in the provider's dashboard. Ask for the narrowest permission the
+recipe names, read tokens from environment variables only, and never put a token in source files.
 
 ## Reading doctor output
 

@@ -8,7 +8,6 @@
  */
 import { randomBytes } from 'node:crypto';
 import { Core, KagamiCoreError } from './core.js';
-import { cloudflareEnforcer, cloudflareEnv } from './cloudflare/enforcer.js';
 import { EnforcerPipeline } from './enforce.js';
 import { consoleSink, Pipeline } from './sinks.js';
 import type { ContainedMachine, Enforcer, HttpRequest, KagamiOptions, KagamiStats, Mode, ResponseSample, Verdict } from './types.js';
@@ -166,7 +165,7 @@ export class Kagami {
     // deployment can be configured without code changes.
     options = { ...options, containment: options.containment ?? envContainment() };
     // Enforcers only start when Kagami runs, so the kill switch also stops them.
-    const enforcers = this.enabled ? [...(options.enforcers ?? []), ...this.builtInEnforcers(options)] : [];
+    const enforcers = this.enabled ? [...(options.enforcers ?? [])] : [];
     this.enforcement = new EnforcerPipeline(enforcers, this.warn);
     if ((options.enforcers?.length ?? 0) > 0 && !options.containment) {
       this.warn('[kagami] Enforcers are configured but containment is off, so they will receive nothing. Set `containment: true` or KAGAMI_CONTAINMENT=on.');
@@ -193,40 +192,6 @@ export class Kagami {
       this.enabled = false;
       const msg = err instanceof KagamiCoreError ? err.message : String(err);
       this.warn(`[kagami] Kagami is disabled and requests pass through untouched. ${msg}`);
-    }
-  }
-
-  /**
-   * Enforcers Kagami adds on its own. Cloudflare is added when its three
-   * settings are present (in `options.cloudflare` or the environment) and
-   * containment is on. `cloudflare: false` turns this off.
-   */
-  private builtInEnforcers(options: KagamiOptions): Enforcer[] {
-    if (options.cloudflare === false) return [];
-    const explicit = typeof options.cloudflare === 'object' ? options.cloudflare : {};
-    const env = process.env;
-    const apiToken = explicit.apiToken ?? env.CLOUDFLARE_API_TOKEN ?? '';
-    const accountId = explicit.accountId ?? env.CLOUDFLARE_ACCOUNT_ID ?? '';
-    const listId = explicit.listId ?? env.KAGAMI_CLOUDFLARE_LIST_ID ?? '';
-    const given = [apiToken, accountId, listId].filter((v) => v.trim()).length;
-    if (given === 0) {
-      if (options.cloudflare) this.warn('[kagami] Cloudflare is enabled but CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and KAGAMI_CLOUDFLARE_LIST_ID are not set.');
-      return [];
-    }
-    if (given < 3) {
-      const missing = cloudflareEnv({ CLOUDFLARE_API_TOKEN: apiToken, CLOUDFLARE_ACCOUNT_ID: accountId, KAGAMI_CLOUDFLARE_LIST_ID: listId }).missing;
-      this.warn(`[kagami] Cloudflare blocking is off because ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set.`);
-      return [];
-    }
-    if (!options.containment) {
-      this.warn('[kagami] Cloudflare settings are present but containment is off, so nothing will be sent to Cloudflare. Set `containment: true` or KAGAMI_CONTAINMENT=on.');
-      return [];
-    }
-    try {
-      return [cloudflareEnforcer({ apiToken, accountId, listId, ...(explicit.sweepMs !== undefined && { sweepMs: explicit.sweepMs }), logger: { warn: this.warn } })];
-    } catch (err) {
-      this.warn(`[kagami] Cloudflare blocking is off. ${(err as Error)?.message ?? err}`);
-      return [];
     }
   }
 

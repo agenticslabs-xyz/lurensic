@@ -33,7 +33,7 @@ app.use(kagami({
 }));
 ```
 
-Behind a proxy or Cloudflare, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Kagami then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. To block contained machines at Cloudflare's edge as well, set `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID`. See the [Cloudflare guide](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/cloudflare.md).
+Behind a proxy or Cloudflare, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Kagami then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. To block contained machines at your firewall or CDN as well, see [Blocking at your firewall or CDN](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/firewall.md).
 
 The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/kagami
 

@@ -48,8 +48,8 @@ is containing someone who is not an attacker.
 | The shadow leaks another visitor's data to a contained attacker | Only responses a shared HTTP cache could store are kept. Requests with cookies or `Authorization`, responses with `Set-Cookie` or `Cache-Control: private` or `no-store` are never stored, and a page that reflects another visitor's query string is replayed only to a request with the same query string. |
 | The shadow tells the attacker it has been contained | The shadow replays the app's own public responses and 404 pages with the same bait as live ones. **Residual risk.** An attacker comparing many requests may notice that query parameters stop having effects. By then it is already cut off from the application. |
 | An attacker evades containment by changing address | A new address is a new machine. Containment covers an IPv6 /64, a honeytoken used from a new address also contains it, and tripwires usually fire within the first few dozen requests of a new machine. **Residual risk.** An attacker with many fresh addresses that never touches a tripwire stays uncontained. |
-| An enforcer credential leaks | Enforcer credentials stay on the host. The Cloudflare enforcer needs only the "Account Filter Lists Edit" permission, reads its token from the environment, never logs it, and only changes list items it created itself. The broader token that `cloudflare setup` uses to add the WAF rule is meant for one run and then deletion, and setup only ever adds a rule, never replacing existing ones. Enforcers never receive private, loopback, documentation or carrier-grade NAT addresses. |
-| An edge list fills up or the provider is unreachable | Enforcers run off the request path and fail without affecting requests. Failures are counted in `stats().enforcerErrors`. Entries expire, and the Cloudflare enforcer removes expired and duplicate entries every ten minutes. |
+| An enforcer credential leaks | Kagami holds no provider credentials. Any credential a firewall recipe needs belongs to the user's own code, and the recipes ask for the narrowest permission, such as Cloudflare's "Account Filter Lists Edit". The webhook enforcer signs its requests so a receiver can keep cloud credentials out of the app entirely. Enforcers never receive private, loopback, documentation or carrier-grade NAT addresses. |
+| An edge list fills up or the provider is unreachable | Enforcers run off the request path and fail without affecting requests. Failures are counted in `stats().enforcerErrors`. Entries expire, and `blocklistFile` removes expired entries every minute. A failed write or `onChange` does not stop later updates. |
 
 ### 3.3 Against detection (A1, A2)
 
@@ -93,7 +93,7 @@ Kagami processes request metadata, which includes personal data such as IP addre
 host unless a sink is configured. IP logging can be set to `hashed` or `omit`. Request bodies are inspected in memory
 and never logged. Only short, sanitised snippets of *matched* attack payloads are recorded, with sensitive fields redacted.
 With containment on, the addresses of contained machines are kept in memory for the containment period and passed to
-the enforcers you configure, which may send them to a third party such as Cloudflare. The shadow keeps copies of
+the enforcers you configure, which may send them to a third party such as a CDN. The shadow keeps copies of
 public responses in memory only.
 
 ## 4. Out of scope
