@@ -35,6 +35,9 @@ app.use(kagami({
 
 Behind a proxy or Cloudflare, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Kagami then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. To block contained machines at your firewall or CDN as well, see [Blocking at your firewall or CDN](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/firewall.md).
 
+To keep containment through restarts and across several servers, pass a store, such as your Redis client, with
+`store: redis`. See [Choose your setup](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/choose-your-setup.md) for this and every other path.
+
 The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/kagami
 
 Apache-2.0. Copyright [Agentics Labs](https://agenticslabs.xyz).

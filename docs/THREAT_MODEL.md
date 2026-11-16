@@ -49,6 +49,9 @@ is containing someone who is not an attacker.
 | The shadow tells the attacker it has been contained | The shadow replays the app's own public responses and 404 pages with the same bait as live ones. **Residual risk.** An attacker comparing many requests may notice that query parameters stop having effects. By then it is already cut off from the application. |
 | An attacker evades containment by changing address | A new address is a new machine. Containment covers an IPv6 /64, a honeytoken used from a new address also contains it, and tripwires usually fire within the first few dozen requests of a new machine. **Residual risk.** An attacker with many fresh addresses that never touches a tripwire stays uncontained. |
 | An enforcer credential leaks | Kagami holds no provider credentials. Any credential a firewall recipe needs belongs to the user's own code, and the recipes ask for the narrowest permission, such as Cloudflare's "Account Filter Lists Edit". The webhook enforcer signs its requests so a receiver can keep cloud credentials out of the app entirely. Enforcers never receive private, loopback, documentation or carrier-grade NAT addresses. |
+| Someone with write access to the shared store contains an innocent address | The store is part of your own infrastructure, like your database, so keep its credentials as private. Kagami only loads an entry whose key matches the machine making the request and whose expiry lies ahead, and entries written for another deployment secret never match. Containment expires, and `release` ends it early. |
+| The shared store is slow, down or full | Reads wait at most 300 ms and are cached for a minute per machine. Every failure falls back to the instance's own memory and is counted in `stats().storeErrors`. Writes run off the request path like any enforcer. |
+| A runtime does not report the client address | The fetch and Hono adapters let every request through untouched and warn once, instead of treating every visitor as one machine, which would let one tripwire contain everybody. The `clientIp` option supplies the address. |
 | An edge list fills up or the provider is unreachable | Enforcers run off the request path and fail without affecting requests. Failures are counted in `stats().enforcerErrors`. Entries expire, and `blocklistFile` removes expired entries every minute. A failed write or `onChange` does not stop later updates. |
 
 ### 3.3 Against detection (A1, A2)
@@ -93,8 +96,9 @@ Kagami processes request metadata, which includes personal data such as IP addre
 host unless a sink is configured. IP logging can be set to `hashed` or `omit`. Request bodies are inspected in memory
 and never logged. Only short, sanitised snippets of *matched* attack payloads are recorded, with sensitive fields redacted.
 With containment on, the addresses of contained machines are kept in memory for the containment period and passed to
-the enforcers you configure, which may send them to a third party such as a CDN. The shadow keeps copies of
-public responses in memory only.
+the enforcers you configure, which may send them to a third party such as a CDN. With a store, the same addresses are
+kept in that store until the containment ends. Store keys are keyed hashes, but the values hold the addresses. The
+shadow keeps copies of public responses in memory only.
 
 ## 4. Out of scope
 

@@ -72,28 +72,33 @@ tested it hundreds of times.
 
 ## Components
 
-You install one package. Inside it, Kagami is a detection engine written once in Rust, a runtime that runs it in
-Node, and a thin adapter for your framework. Containment and alerts are built in, and contained machines can be handed to any firewall or CDN you already use.
+You install one package. Inside it, Kagami is a detection engine written once in Rust, a runtime that runs it on
+Node, Bun, Deno and Cloudflare Workers, and a thin adapter for your framework. Containment and alerts are built in.
+Contained machines can also be kept in a store your platform already has, and handed to any firewall or CDN you use.
 
 ```mermaid
 flowchart TB
     subgraph proc["Your app process"]
-        AD["Framework adapter<br/>@agenticslabs/kagami-express"] --> NODE["Language runtime<br/>@agenticslabs/kagami"]
+        AD["Framework adapter<br/>Express, Hono or any fetch app"] --> NODE["Runtime<br/>@agenticslabs/kagami<br/>Node, Bun, Deno, Workers"]
         NODE --> CORE["kagami-core<br/>Rust engine compiled to WebAssembly"]
         NODE --> SINKS["Event sinks<br/>stdout, file, webhook, Slack"]
         NODE --> ENF["Enforcers<br/>blocklist file, webhook, callback"]
     end
+    NODE -.->|"optional"| ST["Store<br/>Workers KV, Redis, ..."]
     ENF --> FW["Your firewall, CDN or WAF<br/>nginx, Cloudflare, AWS, ..."]
 ```
 
 | Component | What it is | Where |
 |---|---|---|
 | **kagami-core** | The detection and deception engine. Rust compiled to WebAssembly with no imports, so it has no clock, network or file access. Every language runs the same engine. | [`crates/kagami-core`](crates/kagami-core) |
-| **@agenticslabs/kagami** | The Node runtime. Loads the engine, fails open, delivers events to sinks and contained machines to enforcers (blocklist file, webhook, callback), and provides the `kagami` CLI (`secret`, `doctor`, `verify-log`). | [`packages/node`](packages/node) |
+| **@agenticslabs/kagami** | The runtime for Node, Bun, Deno and Cloudflare Workers. Loads the engine, fails open, delivers events to sinks and contained machines to enforcers and the optional store, wraps any `fetch(request)` app with `kagami(app)`, and provides the `kagami` CLI (`secret`, `doctor`, `verify-log`). | [`packages/node`](packages/node) |
 | **@agenticslabs/kagami-express** | Express middleware. Translates requests, applies decoys and containment, and passes public responses to the shadow. | [`packages/express`](packages/express) |
+| **@agenticslabs/kagami-hono** | Hono middleware, for Hono on Node, Bun, Deno, Cloudflare Workers and serverless hosts. | [`packages/hono`](packages/hono) |
 | **Demo shop and benchmarks** | An ordinary web shop used to test Kagami against live AI pentest agents, optionally with planted real bugs. | [`examples/demo-shop`](examples/demo-shop), [`docs/BENCHMARK.md`](docs/BENCHMARK.md) |
 
-You only install `@agenticslabs/kagami-express`, which brings the rest with it. A web-standard adapter for any app with a `fetch(request)` handler, and a Hono adapter, are next. Other frameworks and languages can plug into the same engine later. See [Writing an adapter](docs/guides/new-adapter.md).
+You install the package for your framework, which brings the rest with it. [Choose your setup](docs/guides/choose-your-setup.md)
+shows the path for each framework and host, including what is tested. Other frameworks and languages can plug into the
+same engine. See [Writing an adapter](docs/guides/new-adapter.md).
 
 ## Quick start
 
@@ -141,12 +146,17 @@ app.use(kagami({
 
 The [getting started guide](docs/guides/getting-started.md) walks through each step.
 
+On Hono the line is the same, `app.use(kagami())` from `@agenticslabs/kagami-hono`. On Cloudflare Workers, Bun or Deno
+without a framework, it is `export default kagami(app)` from `@agenticslabs/kagami`. Next.js and static sites are not
+supported. [Choose your setup](docs/guides/choose-your-setup.md) covers every path.
+
 ## What you need
 
 | To... | You need | Notes |
 |---|---|---|
 | run Kagami | `KAGAMI_SECRET` | A random value you generate yourself with `npx @agenticslabs/kagami secret`. Not an account or an API key. No sign-up, no service and no telemetry. |
 | get alerts by webhook or Slack | A webhook URL, and a signing secret you choose | Optional |
+| keep containment across restarts and every copy of the app | A key-value store your platform already has, such as Workers KV, Deno KV, Netlify Blobs or Redis | Optional. Needed on Cloudflare Workers and serverless hosts, not on one long-running server. Free on most platforms. See [the store](docs/guides/choose-your-setup.md#the-store). |
 | also block contained machines at your firewall or CDN | Whatever that firewall or CDN needs | Optional. Kagami hands you the list as a file, a webhook or a callback. Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in [Blocking at your firewall or CDN](docs/guides/firewall.md). |
 
 Without a secret in production, Kagami switches itself off and lets requests through, so a missing setting can
@@ -222,6 +232,7 @@ containment on. Live rounds of the same comparison are next. The method is in [d
 
 | Guide | For |
 |---|---|
+| [Choose your setup](docs/guides/choose-your-setup.md) | The path for your framework and host, with the store and what each path supports |
 | [Getting started](docs/guides/getting-started.md) | Installing Kagami in an Express app, step by step |
 | [How Kagami works](docs/guides/how-it-works.md) | Diagrams of the request lifecycle, tripwires, containment and the shadow |
 | [Containment and enforcement](docs/guides/containment.md) | Cutting attackers off, blocklists, webhooks, allowlists and release |
@@ -236,9 +247,11 @@ containment on. Live rounds of the same comparison are next. The method is in [d
 
 ```
 crates/kagami-core       The engine, Rust compiled to WebAssembly (detection, decoys, containment, audit log)
-packages/node            @agenticslabs/kagami, the Node runtime, event sinks, enforcers and CLI
+packages/node            @agenticslabs/kagami, the runtime, fetch adapter, event sinks, enforcers, store and CLI
 packages/express         @agenticslabs/kagami-express, the Express middleware
+packages/hono            @agenticslabs/kagami-hono, the Hono middleware
 examples/demo-shop       The benchmark target and the attacker persona tests
+examples/hono-app        One small app that runs on Node and on Cloudflare Workers, for testing hosts
 docs/                    Guides, design, threat model, benchmark method, AI integration guide
 scripts/                 Benchmark round runner and report generator
 ```
@@ -255,9 +268,7 @@ pnpm demo              # demo shop on http://localhost:41837 in protect mode
 
 ## Roadmap
 
-- Run the runtime on Bun, Deno and Cloudflare Workers as well as Node, with a web-standard adapter for any app with a `fetch(request)` handler
-- A Hono adapter
-- An optional `store` setting that takes the key-value store your platform already provides, such as Workers KV, Deno KV, Netlify Blobs or Redis, so containment survives restarts and holds across serverless and edge instances
+- Live tests on Render and Cloudflare Workers, then on AWS Lambda, Vercel and Netlify
 - Presets for hosts that pass the visitor address in their own way, starting with Render
 - Fastify and other languages, when people ask for them
 - **Utsusemi**, a richer shadow that also answers personalised routes with consistent fake data

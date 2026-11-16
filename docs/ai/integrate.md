@@ -20,11 +20,16 @@ cut them off. Follow these steps in order. Each step ends with a check you can r
 
 | The app uses | Install | Continue with |
 |---|---|---|
-| Node with Express 4 or 5 | `npm install @agenticslabs/kagami-express` | Step 2 |
+| Express 4 or 5 on Node | `npm install @agenticslabs/kagami-express` | Step 2 |
+| Hono on Node, Bun, Deno, Cloudflare Workers, AWS Lambda, Vercel or Netlify | `npm install @agenticslabs/kagami-hono` | Step 2 |
+| A `fetch(request)` handler without a framework, on Bun, Deno or Cloudflare Workers | `npm install @agenticslabs/kagami` | Step 2 |
 | Another Node framework | `npm install @agenticslabs/kagami` | Step 2, using the `Kagami` class as described in [Writing an adapter](../guides/new-adapter.md) |
+| Next.js, or a static site | Not supported | Tell the owner why, from [Choose your setup](../guides/choose-your-setup.md#not-supported). Do not wrap Next.js in a custom server to make it fit. |
 | Python, Go, Ruby, PHP, Java or .NET | Not supported yet | Tell the owner. Do not write your own detection logic. |
 
-Use the project's package manager (npm, pnpm, yarn or bun).
+Use the project's package manager (npm, pnpm, yarn or bun). Also find out where the app runs, because that decides the
+client address setting in step 4 and whether a store is needed in step 7. [Choose your setup](../guides/choose-your-setup.md)
+has the details for each host.
 
 ## Step 2. Create the secret
 
@@ -54,6 +59,17 @@ app.use(kagami({
 // routes and express.static(...) come after this line
 ```
 
+**Hono.** Add `app.use(kagami())` from `@agenticslabs/kagami-hono` before every route. Routes read the seal helpers
+from `c.get('kagami')`.
+
+**A `fetch` handler.** Wrap the handler or app object with `kagami()` from `@agenticslabs/kagami` and export the result
+the way the runtime expects, such as `export default kagami(app)` on Cloudflare Workers, Bun and `deno serve`.
+
+**Cloudflare Workers.** Settings come from the Worker's bindings. Put `KAGAMI_MODE` and `KAGAMI_CONTAINMENT` in
+`[vars]` in `wrangler.toml`, and have the owner run `npx wrangler secret put KAGAMI_SECRET`. Without the secret,
+Kagami stays off on Workers, even in `wrangler dev`. For local development the value can go in an untracked
+`.dev.vars` file.
+
 If the app uses a different body parser, keep the same order. The packages are ES modules. A CommonJS project can
 `require()` them on Node 20.19 or newer and 22.12 or newer. On older versions use `await import()`.
 
@@ -76,6 +92,13 @@ Ask the owner how traffic reaches the app, then set exactly one of these.
 | Through Cloudflare and then a local proxy | `clientAddress: { cloudflare: true, trustedProxies: ['127.0.0.1', '::1'] }` |
 
 Never use `app.set('trust proxy', true)` for this.
+
+With Hono or `kagami(app)`, the runtime reports the connection's address on Node, Bun, Deno, Cloudflare Workers and AWS
+Lambda, so the table above applies the same way. On Vercel and Netlify the runtime does not report it. Set `clientIp`
+as shown in [Choose your setup](../guides/choose-your-setup.md#aws-lambda-vercel-and-netlify-functions). If Kagami logs
+"The client address is unknown on this runtime", this step is missing.
+
+Do not guess an address setting for Render. It is still being verified. Tell the owner, and point them at the doctor.
 
 ## Step 5. Keep the events
 
@@ -118,7 +141,26 @@ If the app hands record IDs to clients, offer to seal them with `req.kagami.seal
 
 **Check.** Run the doctor with `--url`, `--events` and `--blocklist contained.json`. `protect` must pass.
 
-## Step 7. Edge blocking, optional
+## Step 7. A store, when the host needs one
+
+Containment lives in the memory of each running copy of the app. Decide with the owner whether a store is needed.
+
+| The app runs on | Store |
+|---|---|
+| One long-running server (VPS, Docker, a single Render or Railway service) | Not needed. Mention that a restart or deploy clears containment, and that a store fixes that. |
+| Several servers behind a load balancer, or a host that sleeps, such as Render's free tier | Recommended. Use the Redis the app already has, or Upstash. |
+| Cloudflare Workers | Recommended. Have the owner run `npx wrangler kv namespace create KAGAMI_STORE` and add the binding it prints to `wrangler.toml` with the name `KAGAMI_STORE`. Kagami uses it without any code. |
+| AWS Lambda, Vercel or Netlify | Strongly recommended. Upstash Redis, or `getStore('kagami')` from `@netlify/blobs` on Netlify. |
+
+Pass the store object the platform already provides, for example `kagami({ store: Redis.fromEnv() })` with
+`@upstash/redis`. Never write a custom store wrapper when the platform's own object works. Store credentials go in
+environment variables like any other secret. The free allowances and the full behaviour are in
+[Choose your setup](../guides/choose-your-setup.md#the-store).
+
+**Check.** With containment on, `kagami.stats().storeErrors` stays at 0, and the log has no "Reading the store failed"
+or "The store is not used" lines.
+
+## Step 8. Edge blocking, optional
 
 Containment inside the app already protects it. Only add edge blocking when the owner asks for it, and mention that
 an edge block tells the attacker it was caught, while the shadow does not.

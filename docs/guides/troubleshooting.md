@@ -37,6 +37,27 @@ mode, which is expected.
 
 **Every visitor has the same address in events.** The app is behind a proxy. Set `clientAddress`.
 
+**"The client address is unknown on this runtime".** The fetch or Hono adapter could not find the visitor's address,
+so Kagami lets requests through untouched. This happens on hosts such as Vercel and Netlify, whose runtime does not
+report it. Pass `clientIp` as shown in [Choose your setup](choose-your-setup.md#aws-lambda-vercel-and-netlify-functions).
+
+**Kagami does nothing on Cloudflare Workers.** Look in the Worker's logs for a `[kagami]` line. Without
+`KAGAMI_SECRET` Kagami switches itself off on Workers, even during `wrangler dev`. Set it with
+`npx wrangler secret put KAGAMI_SECRET`, or in `.dev.vars` for local development.
+
+**"The Kagami engine was not loaded".** A bundler dropped the package entry that loads the engine. Import Kagami from
+`@agenticslabs/kagami` or an adapter package, not from a file inside it, and keep the bundler from removing modules the
+package marks as having side effects.
+
+**A contained machine reaches another copy of the app.** Each copy keeps its own memory. Add a store, see
+[Containment and enforcement](containment.md#across-restarts-and-instances).
+
+**"Reading the store failed".** The store was slow or unreachable, so that request was checked against the instance's
+memory only. Check the store's credentials and limits. Failures are counted in `kagami.stats().storeErrors`.
+
+**"The store is not used".** The `store` option got something Kagami does not recognise. Pass Workers KV, Deno KV,
+Netlify Blobs, a Redis client, or an object with `get`, `put` and `delete`.
+
 **A colleague was contained.** Release them with `kagami.release('<address>')`, and add your office to
 `containment.allow`. Check the `containment.started` event to see which tripwire fired.
 

@@ -41,6 +41,10 @@ For every request the adapter does the following.
 Also provide `seal` and `verify` to the application, a kill switch (`KAGAMI_DISABLED`), and a way to read the
 contained list and release a machine.
 
+Frameworks built on the web-standard Request and Response API need no new runtime. Use `FetchGuard` from
+`@agenticslabs/kagami`, as the Hono adapter does in about 60 lines. It handles the request, the client address, the
+store and the response decoration.
+
 The runtime should offer the same provider-neutral enforcers as the Node runtime, a blocklist file, a signed webhook
 and a callback, so a user installs one package and runs nothing else.
 

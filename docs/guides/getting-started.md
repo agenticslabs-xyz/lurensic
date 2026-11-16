@@ -1,7 +1,8 @@
 # Getting started
 
 This guide adds Kagami to an Express app in four steps. Each step is safe to deploy on its own, and each one ends
-with a check.
+with a check. The same four steps apply to Hono, Cloudflare Workers, Bun and Deno. Only the install and the one line
+differ, as shown in [Choose your setup](choose-your-setup.md).
 
 ```mermaid
 flowchart LR

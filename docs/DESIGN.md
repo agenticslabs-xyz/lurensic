@@ -49,17 +49,19 @@ Existing defences fall into two groups.
 
 ```mermaid
 flowchart TB
-    subgraph host["Host process (Node today, Python and Go later)"]
-        AD["Adapter, for example Express<br/>maps requests and responses,<br/>decorates send(), captures public responses"]
+    subgraph host["Host process (Node, Bun, Deno or Cloudflare Workers today)"]
+        AD["Adapter, Express, Hono or fetch<br/>maps requests and responses,<br/>decorates them, captures public responses"]
         RT["Runtime, @agenticslabs/kagami<br/>fail-open wrapper, kill switch, secret,<br/>JSON envelope to and from the WASM ABI"]
         CORE["kagami-core (WASM)<br/>rules, decoys, honeytokens, sessions,<br/>containment, shadow, client address, audit log<br/>no imports, so no clock, no I/O, no randomness"]
         SINKS["Event sinks<br/>stdout, file, webhook, Slack"]
-        ENF["Enforcers<br/>blocklist file, webhook, callback"]
+        ENF["Enforcers<br/>blocklist file, webhook, callback,<br/>and the store writer"]
         AD --> RT --> CORE
         RT --> SINKS
         RT --> ENF
     end
     ENF --> FW["Your firewall, CDN or WAF<br/>through a blocklist file, webhook or callback"]
+    ENF -.-> ST["Optional store<br/>Workers KV, Deno KV, Redis, ..."]
+    ST -.->|"read before inspect"| RT
 ```
 
 Decisions are made only in the core. The runtime moves data and does all I/O off the request path, including the
@@ -78,10 +80,19 @@ The WebAssembly module exports four functions and imports none.
 
 The host sends `{"op": "...", "args": {...}}`. The core answers with `{"ok": true, "result": ...}` or
 `{"ok": false, "error": {"code", "message"}}`. The operations are `init`, `inspect`, `response`,
-`decorate_html`, `decorate_json`, `seal`, `verify_sealed`, `manifest`, `contained`, `release` and `version`.
+`decorate_html`, `decorate_json`, `seal`, `verify_sealed`, `manifest`, `contained`, `release`, `source`, `restore`
+and `version`. `source` returns the keyed hash of a request's machine, and `restore` loads containments that another
+instance recorded in a shared store, without announcing them again.
 
 The core takes the time as an argument (`now_ms`) and has no I/O, so it is deterministic. The same
 inputs produce the same outputs in every host, which makes cross-language conformance testing possible.
+
+**Loading the engine.** The JavaScript runtime embeds the module as base64 for Node, Bun and Deno, so no file has to
+be found at runtime and bundlers need no setup. Cloudflare Workers only run WebAssembly compiled at deploy time, so a
+separate entry, chosen through the `workerd` export condition, imports the `.wasm` file and lets Wrangler compile it.
+Both entries are marked as having side effects, because a bundler that drops them drops the engine. Hashing and signing
+use Web Crypto, and settings can come from Workers bindings instead of `process.env`, so the same runtime code runs on
+all four. Features that write files are only in the Node, Bun and Deno entry.
 
 A new language needs a small runtime that loads the module, implements the envelope call and runs the event and
 enforcer pipelines, plus a thin adapter per framework. Python (wasmtime), Go (wazero, no cgo), Java (Chicory) and
@@ -255,6 +266,14 @@ an edge firewall. The Node package includes `blocklistFile`, `webhookEnforcer` a
 provider neutral on purpose. Connecting them to a particular firewall, CDN or WAF is a short recipe in the user's own
 code, so the package carries no provider credentials and no provider APIs to keep up with.
 
+**The store.** Containment state lives in each instance's memory. With the optional `store` setting, the host also
+writes each new containment to a key-value store, through an internal enforcer, and reads a machine from the store
+before inspecting its first request on an instance. The key is the machine's keyed hash, which every instance with the
+same secret computes the same way, and each value carries its own expiry. Reads are cached for a minute per machine
+and time out after 300 ms, and every failure falls back to memory alone. The host recognises Workers KV, Deno KV,
+Netlify Blobs and Redis clients by their methods, so the package has no code for any particular platform. See
+[Choose your setup](guides/choose-your-setup.md#the-store).
+
 ## 7. Security model
 
 **Kerckhoffs's principle.** Kagami's design and source are public. The deployment secret is the only secret. The
@@ -317,7 +336,7 @@ The WASM module is about 320 KiB and is compiled once per process.
 
 The next planned optimisations are a binary envelope and Aho-Corasick matching for the payload tables.
 
-## 11. Configuration reference (Node)
+## 11. Configuration reference (JavaScript)
 
 | Option | Default | Description |
 |---|---|---|
@@ -334,6 +353,9 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `sinks` | `[consoleSink()]` | |
 | `containment` | `KAGAMI_CONTAINMENT` or off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
 | `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile` or `webhookEnforcer`. See [Blocking at your firewall or CDN](guides/firewall.md) |
+| `store` | none | A key-value store shared by every instance, such as Workers KV, Deno KV, Netlify Blobs or a Redis client. On Workers a binding named `KAGAMI_STORE` is used by itself, and a function receives the bindings. See [the store](guides/choose-your-setup.md#the-store) |
+| `env` | `process.env` | Where the `KAGAMI_*` settings are read from. The fetch and Hono adapters pass Workers bindings here |
+| `clientIp` (fetch and Hono) | from the runtime | A function that returns the client address, for hosts whose runtime does not report it |
 | `maxBodyBytes` | 16384 | |
 | `maxEventsPerMinute` | 600 | |
 | `maxSessions` | 50000 | |
@@ -341,8 +363,8 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 ## 12. Roadmap
 
 1. **Utsusemi.** A richer shadow that also answers personalised routes for contained machines with consistent fake data.
-2. A portable runtime for Bun, Deno and Cloudflare Workers, a web-standard adapter for `fetch(request)` apps, and a Hono adapter. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
-3. An optional `store` setting that accepts any key-value store with expiry (Workers KV, Deno KV, Netlify Blobs, Redis), so containment survives restarts and is shared across instances. Kagami keeps no platform code for it.
+2. Live tests on Render, Cloudflare Workers, AWS Lambda, Vercel and Netlify, and presets for hosts that pass the visitor address in their own way. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
+3. More adapters (Fastify, FastAPI, Django, Go) when people ask for them, with a shared conformance vector suite.
 4. Off-site honeytoken monitoring (cloud canary credentials) and a forged JWT tripwire.
 5. `kagami doctor` (route collision check, config lint) and a local dashboard.
 6. A public evasion challenge and a live benchmark scoreboard.

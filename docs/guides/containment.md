@@ -118,6 +118,21 @@ requests. Its failures are counted in `kagami.stats().enforcerErrors`.
 
 Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in [Blocking at your firewall or CDN](firewall.md).
 
+## Across restarts and instances
+
+Contained machines are kept in the memory of each running copy of the app. A restart or a deploy clears it, and on
+Cloudflare Workers or serverless hosts each copy has its own memory. Add a store to share containment between copies
+and keep it through restarts.
+
+```js
+app.use(kagami({ containment: true, store: redis }));   // Workers KV, Deno KV, Netlify Blobs or a Redis client
+```
+
+On Cloudflare Workers a KV binding named `KAGAMI_STORE` is used without any code. Each new containment is written to
+the store off the request path, and each copy reads a machine from the store before its first request there. A slow or
+broken store never holds up a request. The details, and what each store costs, are in
+[Choose your setup](choose-your-setup.md#the-store).
+
 ## Managing contained machines
 
 ```js

@@ -20,6 +20,7 @@ with `npx @agenticslabs/kagami doctor --json`.
 
 - [How Kagami works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception, containment
 - [Containment and enforcement](docs/guides/containment.md): cutting attackers off, blocklists and webhooks
+- [Choose your setup](docs/guides/choose-your-setup.md): the path for each framework and host (Express, Hono, Cloudflare Workers, Bun, Deno, serverless), the optional store, and what is not supported
 - [Blocking at your firewall or CDN](docs/guides/firewall.md): recipes that send contained machines to nginx, host firewalls, Cloudflare and cloud WAFs
 
 ## Reference

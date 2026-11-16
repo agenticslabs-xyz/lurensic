@@ -43,6 +43,21 @@ npx @agenticslabs/kagami doctor --url https://shop.example.com --events /var/log
 It reports the address Kagami saw for its own requests. If that is a private address while you ran the doctor from
 outside, the proxy settings are wrong.
 
+## Where the address comes from without a proxy
+
+| Adapter and runtime | The connection's address |
+|---|---|
+| Express | `req.ip`, or the socket's address with `clientAddress` |
+| Hono or `kagami(app)` on Node | The socket's address from `@hono/node-server` |
+| Hono or `kagami(app)` on Bun | `server.requestIP()` |
+| Hono or `kagami(app)` on Deno | The connection's `remoteAddr` |
+| Cloudflare Workers | `CF-Connecting-IP`, which Cloudflare sets and a client cannot fake |
+| AWS Lambda through Hono | The source address API Gateway puts in the request context |
+| Vercel and Netlify functions | Nothing. Pass `clientIp`, as shown in [Choose your setup](choose-your-setup.md#aws-lambda-vercel-and-netlify-functions) |
+
+When the fetch or Hono adapter finds no address at all, Kagami lets every request through untouched and logs one
+warning, instead of treating every visitor as one machine.
+
 ## Other options
 
 Express's own `app.set('trust proxy', ...)` also works, because Kagami uses `req.ip` when `clientAddress` is not set.
