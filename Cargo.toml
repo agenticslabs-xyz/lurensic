@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/kagami-core"]
+members = ["crates/kagami-core", "crates/kagami-enforcer"]
+# The enforcer needs a C compiler for TLS, so plain `cargo test` builds only
+# the core. CI and `pnpm test:enforcer` build the whole workspace.
+default-members = ["crates/kagami-core"]
 
 [workspace.package]
 version = "0.1.0"

@@ -19,7 +19,13 @@ use serde_json::{json, Map, Value};
 #[serde(default)]
 pub struct Request {
     pub now_ms: u64,
+    /// The client address, as resolved by the host. Ignored when `peer` is set.
     pub ip: String,
+    /// The raw address of the connection's peer. When set, the core works out
+    /// the client address itself from the peer and the forwarding headers,
+    /// following `client_ip` in the configuration. This is the safe default
+    /// for new adapters, because it keeps every language consistent.
+    pub peer: String,
     pub method: String,
     pub host: String,
     /// Raw path, without query string.
@@ -201,6 +207,7 @@ pub struct Engine {
     contained: Contained,
     shadow: Shadow,
     allow: Vec<Cidr>,
+    resolver: net::Resolver,
 }
 
 /// The part of a user agent that identifies a session. Scanners such as
@@ -325,6 +332,19 @@ impl Engine {
             .iter()
             .filter_map(|r| Cidr::parse(r))
             .collect();
+        let cidrs =
+            |v: &[String]| -> Vec<Cidr> { v.iter().filter_map(|r| Cidr::parse(r)).collect() };
+        let cloudflare: Vec<Cidr> = if !cfg.client_ip.cloudflare {
+            Vec::new()
+        } else if cfg.client_ip.cloudflare_ranges.is_empty() {
+            net::CLOUDFLARE_RANGES
+                .iter()
+                .filter_map(|r| Cidr::parse(r))
+                .collect()
+        } else {
+            cidrs(&cfg.client_ip.cloudflare_ranges)
+        };
+        let resolver = net::Resolver::new(&cidrs(&cfg.client_ip.trusted_proxies), &cloudflare);
         Ok((
             Engine {
                 cfg,
@@ -337,6 +357,7 @@ impl Engine {
                 contained,
                 shadow: Shadow::new(shadow_budget),
                 allow,
+                resolver,
             },
             out,
         ))
@@ -348,6 +369,24 @@ impl Engine {
 
     pub fn deployment(&self) -> &str {
         &self.deployment
+    }
+
+    /// Fill `req.ip` from `req.peer` and the forwarding headers when the host
+    /// passed a peer address. The API layer calls this for every request
+    /// before `inspect`, `response` and `verify_sealed`.
+    pub fn resolve_client_ip(&self, req: &mut Request) {
+        if req.peer.trim().is_empty() {
+            return;
+        }
+        req.ip = if self.resolver.is_active() {
+            self.resolver.resolve(
+                &req.peer,
+                req.header("x-forwarded-for"),
+                req.header("cf-connecting-ip"),
+            )
+        } else {
+            req.peer.trim().to_string()
+        };
     }
 
     pub fn session_id(&self, ip: &str, ua: &str) -> String {

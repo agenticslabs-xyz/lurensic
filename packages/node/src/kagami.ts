@@ -98,6 +98,14 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
   if (o.thresholds) cfg.thresholds = { ...(o.thresholds.suspicious !== undefined && { suspicious: o.thresholds.suspicious }), ...(o.thresholds.flagged !== undefined && { flagged: o.thresholds.flagged }) };
   if (o.ignorePaths) cfg.ignore_paths = o.ignorePaths;
   if (o.ipLogging) cfg.ip_logging = o.ipLogging;
+  if (o.clientAddress) {
+    const c = o.clientAddress;
+    cfg.client_ip = {
+      ...(c.trustedProxies && { trusted_proxies: c.trustedProxies }),
+      ...(c.cloudflare !== undefined && { cloudflare: c.cloudflare }),
+      ...(c.cloudflareRanges && { cloudflare_ranges: c.cloudflareRanges }),
+    };
+  }
   if (o.maxEventsPerMinute !== undefined) cfg.max_events_per_minute = o.maxEventsPerMinute;
   if (o.maxSessions !== undefined) cfg.max_sessions = o.maxSessions;
   if (o.containment) {
@@ -234,6 +242,7 @@ export class Kagami {
       headers: req.headers,
       content_type: req.contentType ?? '',
       body_error: req.bodyError ?? '',
+      peer: req.peer ?? '',
       body,
       ...extra,
     };

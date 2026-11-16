@@ -8,6 +8,80 @@
 
 use std::net::{IpAddr, Ipv6Addr};
 
+/// Cloudflare's published ranges, from https://www.cloudflare.com/ips-v4 and
+/// https://www.cloudflare.com/ips-v6, retrieved 2026-11-16. They change
+/// rarely. `client_ip.cloudflare_ranges` overrides them.
+pub const CLOUDFLARE_RANGES: &[&str] = &[
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+    "2400:cb00::/32",
+    "2606:4700::/32",
+    "2803:f800::/32",
+    "2405:b500::/32",
+    "2405:8100::/32",
+    "2a06:98c0::/29",
+    "2c0f:f248::/32",
+];
+
+/// Works out the real client address from the connection's peer address and
+/// the forwarding headers, trusting headers only from known hops.
+///
+/// Anyone can send `X-Forwarded-For` or `CF-Connecting-IP`. Trusting them
+/// from any connection would let an attacker choose its own address, and with
+/// containment, get an innocent address blocked. So the walk starts at the
+/// peer and moves left through `X-Forwarded-For` only while the current hop
+/// is one of your own proxies. If the hop it stops at is a Cloudflare edge
+/// address and Cloudflare is enabled, `CF-Connecting-IP` names the visitor.
+pub struct Resolver {
+    proxies: Vec<Cidr>,
+    cloudflare: Vec<Cidr>,
+}
+
+impl Resolver {
+    pub fn new(proxies: &[Cidr], cloudflare: &[Cidr]) -> Self {
+        Resolver {
+            proxies: proxies.to_vec(),
+            cloudflare: cloudflare.to_vec(),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.proxies.is_empty() || !self.cloudflare.is_empty()
+    }
+
+    /// `xff` and `cf_connecting_ip` are the raw header values, if present.
+    pub fn resolve(&self, peer: &str, xff: Option<&str>, cf_connecting_ip: Option<&str>) -> String {
+        let Some(mut current) = parse_ip(peer) else {
+            return peer.trim().to_string();
+        };
+        let hops: Vec<IpAddr> = xff.unwrap_or("").split(',').filter_map(parse_ip).collect();
+        let mut left = hops.len();
+        while left > 0 && self.proxies.iter().any(|p| p.contains(&current)) {
+            left -= 1;
+            current = hops[left];
+        }
+        if self.cloudflare.iter().any(|c| c.contains(&current)) {
+            if let Some(visitor) = cf_connecting_ip.and_then(parse_ip) {
+                return visitor.to_string();
+            }
+        }
+        current.to_string()
+    }
+}
+
 /// Parse a client address as hosts report it. Accepts brackets, a port on
 /// bracketed IPv6, and an IPv6 zone index.
 pub fn parse_ip(raw: &str) -> Option<IpAddr> {
@@ -158,6 +232,55 @@ mod tests {
         ] {
             assert!(!is_public(&parse_ip(p).unwrap()), "{p}");
         }
+    }
+
+    #[test]
+    fn client_address_resolution() {
+        let cidrs =
+            |v: &[&str]| -> Vec<Cidr> { v.iter().map(|r| Cidr::parse(r).unwrap()).collect() };
+        let cf = cidrs(CLOUDFLARE_RANGES);
+        // Directly behind Cloudflare.
+        let r = Resolver::new(&[], &cf);
+        assert_eq!(
+            r.resolve("::ffff:173.245.48.10", None, Some("8.8.8.8")),
+            "8.8.8.8"
+        );
+        assert_eq!(
+            r.resolve("2606:4700::1", None, Some("2001:4860::8888")),
+            "2001:4860::8888"
+        );
+        // A forged header from anywhere else is ignored.
+        assert_eq!(
+            r.resolve("198.51.100.66", Some("1.2.3.4"), Some("8.8.8.8")),
+            "198.51.100.66"
+        );
+        assert_eq!(
+            r.resolve("173.245.48.10", None, Some("not-an-ip")),
+            "173.245.48.10"
+        );
+        // Behind your own proxy, which appends the Cloudflare edge to X-Forwarded-For.
+        let r = Resolver::new(&cidrs(&["127.0.0.1/32", "10.0.0.0/8"]), &cf);
+        assert_eq!(
+            r.resolve(
+                "127.0.0.1",
+                Some("6.6.6.6, 173.245.48.10, 10.0.0.5"),
+                Some("8.8.8.8")
+            ),
+            "8.8.8.8"
+        );
+        // A client in front of the proxy cannot choose its address by sending its own header.
+        assert_eq!(
+            r.resolve("127.0.0.1", Some("6.6.6.6, 198.51.100.66"), None),
+            "198.51.100.66"
+        );
+        // Only proxies, no Cloudflare.
+        let r = Resolver::new(&cidrs(&["127.0.0.1"]), &[]);
+        assert_eq!(
+            r.resolve("127.0.0.1", Some("203.0.113.9"), Some("8.8.8.8")),
+            "203.0.113.9"
+        );
+        assert_eq!(r.resolve("127.0.0.1", None, None), "127.0.0.1");
+        assert!(!Resolver::new(&[], &[]).is_active());
     }
 
     #[test]

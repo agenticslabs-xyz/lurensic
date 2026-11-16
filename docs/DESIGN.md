@@ -328,7 +328,7 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `ipLogging` | `raw` | `raw`, `hashed` (keyed per deployment) or `omit` |
 | `sinks` | `[consoleSink()]` | |
 | `containment` | off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
-| `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile`, `webhookEnforcer` or `cloudflareEnforcer` |
+| `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile` or `webhookEnforcer`. Edge providers such as Cloudflare are served by `kagami-enforcer`, which reads the JSON blocklist |
 | `maxBodyBytes` | 16384 | |
 | `maxEventsPerMinute` | 600 | |
 | `maxSessions` | 50000 | |

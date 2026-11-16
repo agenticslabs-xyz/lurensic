@@ -112,8 +112,16 @@ impl Runtime {
             .as_mut()
             .ok_or_else(|| err("not_initialised", "call init first"))?;
         let result = match env.op.as_str() {
-            "inspect" => json!(engine.inspect(&parse::<Request>(env.args)?)),
-            "response" => json!(engine.response(&parse::<Request>(env.args)?)),
+            "inspect" => {
+                let mut r: Request = parse(env.args)?;
+                engine.resolve_client_ip(&mut r);
+                json!(engine.inspect(&r))
+            }
+            "response" => {
+                let mut r: Request = parse(env.args)?;
+                engine.resolve_client_ip(&mut r);
+                json!(engine.response(&r))
+            }
             "decorate_html" => {
                 let a: DecorateArgs = parse(env.args)?;
                 json!({"body": engine.decorate_html(&a.session, &a.path, &a.body)})
@@ -127,7 +135,8 @@ impl Runtime {
                 json!({"sealed": engine.seal(&a.value)})
             }
             "verify_sealed" => {
-                let a: VerifyArgs = parse(env.args)?;
+                let mut a: VerifyArgs = parse(env.args)?;
+                engine.resolve_client_ip(&mut a.request);
                 json!(engine.verify_sealed(&a.request, &a.sealed, &a.name))
             }
             "manifest" => engine.manifest(),

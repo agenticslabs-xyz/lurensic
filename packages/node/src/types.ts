@@ -64,6 +64,12 @@ export interface HttpRequest {
   contentType?: string;
   /** Set when the body parser rejected the body, for example invalid JSON or an unsupported charset. Pass the raw text as `body`. */
   bodyError?: string;
+  /**
+   * The raw address of the connection's peer (the socket's remote address).
+   * When set, Kagami works out the client address itself from the peer and the
+   * forwarding headers, following `clientAddress`, and `ip` is ignored.
+   */
+  peer?: string;
 }
 
 export type CoreAction =
@@ -186,6 +192,21 @@ export interface KagamiOptions {
   thresholds?: { suspicious?: number; flagged?: number };
   /** Path prefixes skipped entirely, e.g. `['/healthz', '/static']`. */
   ignorePaths?: string[];
+  /**
+   * Let Kagami work out the real client address from the connection and the
+   * forwarding headers, trusting headers only from your own proxies and, with
+   * `cloudflare`, `CF-Connecting-IP` only from Cloudflare's published ranges.
+   * Adapters then pass `peer`. This matters for containment, because a
+   * trusted forged header would let an attacker get an innocent address blocked.
+   */
+  clientAddress?: {
+    /** Addresses or CIDR ranges of your own proxies in front of the app, such as `127.0.0.1` for nginx on the same host. */
+    trustedProxies?: string[];
+    /** The app is behind Cloudflare. */
+    cloudflare?: boolean;
+    /** Replaces the built-in Cloudflare ranges. */
+    cloudflareRanges?: string[];
+  };
   /** How client IPs appear in events. Default `raw`. */
   ipLogging?: 'raw' | 'hashed' | 'omit';
   /** Where events go. The default writes JSON lines to stdout for `low` and above. */

@@ -179,3 +179,14 @@ test('webhookEnforcer signs its payload and reports releases', async () => {
     await new Promise((r) => server.close(r));
   }
 });
+
+test('the JSON blocklist matches the fixture the Rust enforcer is tested against', () => {
+  const now = Date.parse('2026-11-16T00:00:00.000Z');
+  const h = 3_600_000;
+  const machines = [
+    { source: 'a1', target: '8.8.8.8', public: true, reason: 'decoy.param', since: now - h, until: now + 24 * h },
+    { source: 'b2', target: '2a01:4f8:1:2::/64', public: true, reason: 'honeytoken.used', since: now - h, until: now + 48 * h },
+  ];
+  const fixture = readFileSync(new URL('../../../crates/kagami-enforcer/tests/fixtures/contained.json', import.meta.url), 'utf8');
+  assert.equal(formatBlocklist(machines, 'json', now), fixture.replace(/\r\n/g, '\n'));
+});

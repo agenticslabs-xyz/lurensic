@@ -47,15 +47,15 @@ export interface KagamiExpressOptions extends KagamiOptions {
   /** Reuse an existing engine instead of creating one. */
   instance?: Kagami;
   /**
-   * How to find the real client IP. Defaults to Express's `req.ip` (configure
-   * `app.set('trust proxy', ...)` for your proxy chain). Behind a CDN, use its
-   * header, e.g. `(req) => req.get('cf-connecting-ip') ?? req.ip`.
-   * Getting this right matters because sessions are keyed on IP and user agent.
+   * How to find the real client IP yourself. Prefer `clientAddress`, which
+   * lets Kagami do it safely and the same way in every language. Without
+   * either, Express's `req.ip` is used (configure `app.set('trust proxy', ...)`).
+   * Getting this right matters because sessions and containment are keyed on it.
    */
   clientIp?: (req: Request) => string | undefined;
 }
 
-function toHttpRequest(req: Request, maxBody: number, clientIp?: (req: Request) => string | undefined): HttpRequest {
+function toHttpRequest(req: Request, maxBody: number, clientIp?: (req: Request) => string | undefined, resolveInCore = false): HttpRequest {
   const url = req.originalUrl ?? req.url ?? '/';
   const q = url.indexOf('?');
   const headers: Array<[string, string]> = [];
@@ -76,6 +76,7 @@ function toHttpRequest(req: Request, maxBody: number, clientIp?: (req: Request) 
   }
   return {
     ip: clientIp?.(req) ?? req.ip ?? req.socket?.remoteAddress ?? '',
+    ...(resolveInCore && { peer: req.socket?.remoteAddress ?? '' }),
     method: req.method,
     host: req.get('host') ?? '',
     path: q === -1 ? url : url.slice(0, q),
@@ -153,6 +154,9 @@ function bodyError(err: unknown): { type: string; body: string } | null {
  */
 export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
   const k = options.instance ?? new Kagami(options);
+  // With `clientAddress`, the core resolves the client address from the raw
+  // peer and the headers. A custom `clientIp` function takes precedence.
+  const resolveInCore = !options.clientIp && Boolean(options.clientAddress);
 
   /** Attach the verdict to the request and apply its action. Returns true if Kagami answered. */
   const apply = (req: Request, res: Response, info: HttpRequest, verdict: Verdict, decorate: boolean): boolean => {
@@ -204,7 +208,7 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
     let info: HttpRequest;
     let verdict: Verdict;
     try {
-      info = toHttpRequest(req, k.maxBodyBytes, options.clientIp);
+      info = toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore);
       verdict = k.inspect(info);
     } catch {
       next();
@@ -227,7 +231,7 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
     let verdict: Verdict;
     try {
       info = {
-        ...toHttpRequest(req, k.maxBodyBytes, options.clientIp),
+        ...toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore),
         body: parsed.body.slice(0, k.maxBodyBytes),
         contentType: 'text/plain',
         bodyError: parsed.type,

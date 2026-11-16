@@ -1121,3 +1121,43 @@ fn a_cross_site_forgery_cannot_get_a_visitor_contained() {
             .contained
     );
 }
+
+#[test]
+fn the_core_resolves_the_client_address_from_the_peer() {
+    let (e, _) = engine(Mode::Protect, |c| {
+        c.client_ip.cloudflare = true;
+        c.client_ip.trusted_proxies = vec!["127.0.0.1".into()];
+    });
+    let mut r = req("", "curl/8.9", "GET", "/");
+    r.peer = "127.0.0.1".into();
+    r.headers
+        .push(("x-forwarded-for".into(), "6.6.6.6, 173.245.48.10".into()));
+    r.headers
+        .push(("cf-connecting-ip".into(), "8.8.8.8".into()));
+    e.resolve_client_ip(&mut r);
+    assert_eq!(r.ip, "8.8.8.8");
+
+    // A forged Cloudflare header from outside Cloudflare is ignored.
+    let mut forged = req("", "curl/8.9", "GET", "/");
+    forged.peer = "198.51.100.66".into();
+    forged
+        .headers
+        .push(("cf-connecting-ip".into(), "8.8.8.8".into()));
+    e.resolve_client_ip(&mut forged);
+    assert_eq!(forged.ip, "198.51.100.66");
+
+    // Without a peer, the host's own address is kept.
+    let mut host = req("203.0.113.9", "curl/8.9", "GET", "/");
+    e.resolve_client_ip(&mut host);
+    assert_eq!(host.ip, "203.0.113.9");
+
+    let mut cfg = Config {
+        secret: SECRET.into(),
+        ..Config::default()
+    };
+    cfg.client_ip.trusted_proxies = vec!["proxy.local".into()];
+    assert_eq!(
+        Engine::new(cfg, T0, "t").err().unwrap().code,
+        "invalid_client_ip"
+    );
+}

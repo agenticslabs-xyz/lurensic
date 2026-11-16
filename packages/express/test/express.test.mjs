@@ -314,3 +314,24 @@ test('block containment answers 403 and observe mode never contains', async () =
     }
   }
 });
+
+test('clientAddress lets the core resolve the client address and ignores forged headers', async () => {
+  const cases = [
+    // Trusted local proxy: the address it forwards is used.
+    [{ trustedProxies: ['127.0.0.1', '::1'] }, { 'x-forwarded-for': '198.51.100.9' }, '198.51.100.9'],
+    // Cloudflare enabled, but the connection is not from Cloudflare: the forged header is ignored.
+    [{ cloudflare: true }, { 'cf-connecting-ip': '8.8.8.8', 'x-forwarded-for': '8.8.4.4' }, '127.0.0.1'],
+  ];
+  for (const [clientAddress, headers, expected] of cases) {
+    const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, clientAddress, sinks: [], logger: quiet });
+    const server = await listen(buildApp(mw));
+    try {
+      const field = mw.kagami.manifest().decoys.json_field;
+      await fetchRaw(server.base, `/api/me?${field}=admin`, { headers });
+      assert.deepEqual(mw.kagami.contained().map((m) => m.target), [expected], JSON.stringify(clientAddress));
+    } finally {
+      await server.close();
+      await mw.kagami.close();
+    }
+  }
+});

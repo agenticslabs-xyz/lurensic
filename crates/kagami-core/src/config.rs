@@ -57,6 +57,22 @@ impl Default for Thresholds {
     }
 }
 
+/// How the core finds the real client address when the host passes the
+/// connection's peer address (`Request::peer`). With neither field set, the
+/// host's own `ip` is used unchanged.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClientIp {
+    /// Addresses and CIDR ranges of your own proxies in front of the app.
+    /// For a connection from one of them, the hop before it in
+    /// `X-Forwarded-For` is used, and so on while hops are trusted.
+    pub trusted_proxies: Vec<String>,
+    /// Trust `CF-Connecting-IP` when the hop is a Cloudflare edge address.
+    pub cloudflare: bool,
+    /// Replaces the built-in Cloudflare ranges.
+    pub cloudflare_ranges: Vec<String>,
+}
+
 /// What starts containment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -140,6 +156,7 @@ pub struct Config {
     pub decoy_routes: bool,
     pub tarpit: Tarpit,
     pub containment: Containment,
+    pub client_ip: ClientIp,
     pub thresholds: Thresholds,
     pub ip_logging: IpLogging,
     /// Path prefixes the engine skips entirely (health checks, static assets).
@@ -168,6 +185,7 @@ impl Default for Config {
             decoy_routes: true,
             tarpit: Tarpit::default(),
             containment: Containment::default(),
+            client_ip: ClientIp::default(),
             thresholds: Thresholds::default(),
             ip_logging: IpLogging::Raw,
             ignore_paths: Vec::new(),
@@ -251,6 +269,21 @@ impl Config {
                 "invalid_containment",
                 format!(
                     "containment.allow holds `{}`, which is not an IP address or CIDR range.",
+                    crate::normalize::sanitize(bad, 64)
+                ),
+            ));
+        }
+        let ci = &self.client_ip;
+        if let Some(bad) = ci
+            .trusted_proxies
+            .iter()
+            .chain(&ci.cloudflare_ranges)
+            .find(|r| crate::net::Cidr::parse(r).is_none())
+        {
+            return Err(ConfigError::new(
+                "invalid_client_ip",
+                format!(
+                    "client_ip holds `{}`, which is not an IP address or CIDR range.",
                     crate::normalize::sanitize(bad, 64)
                 ),
             ));

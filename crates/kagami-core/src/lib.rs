@@ -21,12 +21,12 @@ mod crypto;
 mod decoys;
 mod engine;
 mod event;
-mod net;
+pub mod net;
 mod normalize;
 mod respond;
 mod rules;
 mod session;
-mod time;
+pub mod time;
 mod tokens;
 
 #[cfg(target_arch = "wasm32")]
