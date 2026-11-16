@@ -14,6 +14,18 @@ use crate::tokens::{self, session_tag};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+/// A containment as kept in a shared store by the host, so other instances
+/// of the same deployment can load it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StoredEntry {
+    pub source: String,
+    pub target: String,
+    pub reason: String,
+    pub since_ms: u64,
+    pub until_ms: u64,
+}
+
 /// A request as seen by the host adapter. Every field is optional on the wire.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -1115,6 +1127,46 @@ impl Engine {
     /// so hosts must keep it away from untrusted callers.
     pub fn contained_list(&mut self, now: u64) -> Vec<Entry> {
         self.contained.list(now)
+    }
+
+    /// The source id and machine of a request whose client address is
+    /// resolved. Hosts with a shared store look the source up there before
+    /// inspecting the request.
+    pub fn machine_of(&self, req: &Request) -> (String, String) {
+        let target = if req.ip.is_empty() {
+            String::new()
+        } else {
+            net::machine(&req.ip)
+        };
+        (self.source_id(&req.ip), target)
+    }
+
+    /// Load containments that other instances recorded in a shared store.
+    /// Entries for another deployment secret never match a source here, so
+    /// they have no effect. Returns how many machines were newly contained.
+    pub fn restore(&mut self, entries: &[StoredEntry], now: u64) -> usize {
+        entries
+            .iter()
+            .filter(|s| {
+                let reason = rules::CONTAINMENT_TRIPWIRES
+                    .iter()
+                    .copied()
+                    .find(|t| *t == s.reason)
+                    .unwrap_or("containment.restored");
+                // An IPv6 target is a /64, so only the address part is parsed.
+                let addr = s.target.split('/').next().unwrap_or("");
+                let public = net::parse_ip(addr).is_some_and(|a| net::is_public(&a));
+                let e = Entry {
+                    source: s.source.clone(),
+                    target: s.target.clone(),
+                    public,
+                    reason,
+                    since_ms: s.since_ms,
+                    until_ms: s.until_ms,
+                };
+                self.contained.restore(&e, now)
+            })
+            .count()
     }
 
     /// End containment for a machine, given its address, IPv6 /64, or source.

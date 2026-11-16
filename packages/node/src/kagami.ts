@@ -10,6 +10,13 @@ import { Core, KagamiCoreError } from './core.js';
 import { EnforcerPipeline } from './enforce.js';
 import { processEnv, hasProcess, randomHex, type Env } from './platform.js';
 import { consoleSink, Pipeline } from './sinks.js';
+import { parseStored, storeDriver, storeEnforcer, storeKey, withTimeout, type StoreDriver } from './store.js';
+
+/** How long a machine's store lookup is remembered before it is checked again. */
+const STORE_RECHECK_MS = 60_000;
+/** How long a request waits for the store before Kagami carries on without it. */
+const STORE_TIMEOUT_MS = 300;
+const STORE_CACHE_MAX = 10_000;
 import type { ContainedMachine, Enforcer, HttpRequest, KagamiOptions, KagamiStats, Mode, ResponseSample, Verdict } from './types.js';
 
 const PASS: Omit<Verdict, 'session' | 'source'> = {
@@ -145,6 +152,10 @@ export class Kagami {
   private lastFaultWarn = 0;
   private learned401 = false;
   private readonly enforcement: EnforcerPipeline;
+  private readonly store: StoreDriver | null = null;
+  private readonly storeChecked = new Map<string, number>();
+  private storeErrors = 0;
+  private lastStoreWarn = 0;
 
   constructor(options: KagamiOptions = {}) {
     const logger = options.logger ?? console;
@@ -165,8 +176,18 @@ export class Kagami {
     // Containment can be switched on from the environment as well, so a
     // deployment can be configured without code changes.
     options = { ...options, containment: options.containment ?? envContainment(env) };
+    if (options.store !== undefined && options.store !== null) {
+      try {
+        this.store = storeDriver(options.store);
+      } catch (err) {
+        this.warn(`[kagami] The store is not used. ${(err as Error)?.message ?? err}`);
+      }
+      if (this.store && !options.containment) {
+        this.warn('[kagami] A store is set but containment is off, so nothing is stored. Set `containment: true` or KAGAMI_CONTAINMENT=on.');
+      }
+    }
     // Enforcers only start when Kagami runs, so the kill switch also stops them.
-    const enforcers = this.enabled ? [...(options.enforcers ?? [])] : [];
+    const enforcers = this.enabled ? [...(options.enforcers ?? []), ...(this.store ? [storeEnforcer(this.store)] : [])] : [];
     this.enforcement = new EnforcerPipeline(enforcers, this.warn);
     if ((options.enforcers?.length ?? 0) > 0 && !options.containment) {
       this.warn('[kagami] Enforcers are configured but containment is off, so they will receive nothing. Set `containment: true` or KAGAMI_CONTAINMENT=on.');
@@ -261,6 +282,47 @@ export class Kagami {
       body,
       ...extra,
     };
+  }
+
+  /** True when a shared store is configured. Adapters then await `prepare` before `inspect`. */
+  get usesStore(): boolean {
+    return this.store !== null && this.enabled;
+  }
+
+  /**
+   * With a shared store, load this request's machine from it, so a machine
+   * contained by another instance of the app is contained here too. Each
+   * machine is looked up at most once a minute per instance. Never throws,
+   * and gives up after a short wait, so a slow store never holds up a request.
+   */
+  async prepare(req: HttpRequest): Promise<void> {
+    const store = this.store;
+    const core = this.live();
+    if (!store || !core) return;
+    let source: string;
+    try {
+      source = core.call<{ source: string }>('source', this.wire(req)).source;
+    } catch (err) {
+      this.fault(err);
+      return;
+    }
+    const now = Date.now();
+    const last = this.storeChecked.get(source);
+    if (last !== undefined && now - last < STORE_RECHECK_MS) return;
+    if (this.storeChecked.size >= STORE_CACHE_MAX) this.storeChecked.clear();
+    this.storeChecked.set(source, now);
+    try {
+      const stored = parseStored(await withTimeout(store.get(storeKey(source)), STORE_TIMEOUT_MS));
+      if (stored && stored.source === source && stored.until_ms > Date.now()) {
+        this.live()?.call('restore', { entries: [stored], now_ms: Date.now() });
+      }
+    } catch (err) {
+      this.storeErrors++;
+      if (Date.now() - this.lastStoreWarn > 60_000) {
+        this.lastStoreWarn = Date.now();
+        this.warn(`[kagami] Reading the store failed, so this request was checked against this instance's memory only. ${(err as Error)?.message ?? err}`);
+      }
+    }
   }
 
   /** Inspect a request. Never throws; on any problem returns a pass verdict. */
@@ -449,6 +511,7 @@ export class Kagami {
       sinkErrors: this.pipeline.sinkErrors,
       enforced: this.enforcement.enforced,
       enforcerErrors: this.enforcement.errors,
+      storeErrors: this.storeErrors,
       faults: this.faults,
     };
   }

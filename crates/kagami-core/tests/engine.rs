@@ -852,6 +852,63 @@ fn a_tripwire_cuts_the_whole_machine_off_from_the_app() {
     assert_eq!(neighbour.action, Action::Pass);
 }
 
+/// A second instance of the same deployment loads the first one's
+/// containment from a shared store, without announcing it again.
+#[test]
+fn a_containment_from_a_shared_store_holds_on_another_instance() {
+    let block = |c: &mut kagami_core::Containment| c.action = kagami_core::ContainAction::Block;
+    let (mut first, field, _) = contain_engine(Mode::Protect, block);
+    let (mut second, _, _) = contain_engine(Mode::Protect, block);
+    let trip = first.inspect(&req("203.0.113.9", "curl/8.9", "GET", &trip_url(&field)));
+    let c = &trip.contain[0];
+    let stored = kagami_core::StoredEntry {
+        source: c.source.clone(),
+        target: c.target.clone(),
+        reason: c.reason.to_string(),
+        since_ms: c.since_ms,
+        until_ms: c.until_ms,
+    };
+
+    let attacker = req("203.0.113.9", "curl/8.9", "GET", "/");
+    let (source, target) = second.machine_of(&attacker);
+    assert_eq!(
+        (source.as_str(), target.as_str()),
+        (c.source.as_str(), "203.0.113.9"),
+        "both instances key the machine the same way"
+    );
+    assert_eq!(second.restore(std::slice::from_ref(&stored), T0 + 1000), 1);
+    assert_eq!(
+        second.restore(std::slice::from_ref(&stored), T0 + 1000),
+        0,
+        "loading it twice changes nothing"
+    );
+
+    let next = second.inspect(&attacker);
+    assert_eq!(respond_status(&next), Some(403));
+    assert!(
+        next.contain.is_empty(),
+        "the second instance does not announce it again"
+    );
+    assert!(!rules_of(&next.events)
+        .iter()
+        .any(|r| r == "containment.started"));
+    assert_eq!(second.contained_list(T0 + 1000)[0].reason, "decoy.param");
+
+    // An expired entry, or one from another deployment, has no effect.
+    let (mut third, _, _) = contain_engine(Mode::Protect, block);
+    let expired = kagami_core::StoredEntry {
+        until_ms: T0,
+        ..stored.clone()
+    };
+    assert_eq!(third.restore(&[expired], T0 + 1000), 0);
+    let (mut other, _) = engine(Mode::Protect, |c| {
+        c.secret = "another-deployment-secret-0123456789abcdef".into();
+        c.containment.enabled = true;
+    });
+    other.restore(&[stored], T0 + 1000);
+    assert_eq!(other.inspect(&attacker).action, Action::Pass);
+}
+
 #[test]
 fn an_ipv6_slash_64_is_one_machine() {
     let (mut e, field, _) = contain_engine(Mode::Protect, |_| {});

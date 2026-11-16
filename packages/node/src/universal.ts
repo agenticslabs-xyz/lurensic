@@ -8,6 +8,7 @@ export { callbackSink, consoleSink, escapeSlack, formatSlack, memorySink, slackS
 export { verifyChain, type ChainResult } from './chain.js';
 export { callbackEnforcer, formatBlocklist, webhookEnforcer, type BlocklistFormat } from './enforce.js';
 export { FetchGuard, kagami, kagamiContext, peerAddress, type FetchAdapterOptions, type GuardedApp, type KagamiContext } from './fetch.js';
+export { storeDriver, STORE_HELP, type StoreDriver } from './store.js';
 export { SEVERITY_RANK } from './types.js';
 export type {
   ContainedMachine,

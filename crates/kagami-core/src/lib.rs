@@ -37,7 +37,9 @@ pub use config::{
     Config, ConfigError, ContainAction, Containment, IpLogging, Mode, Tarpit, Thresholds, Trigger,
 };
 pub use contain::Entry as ContainedMachine;
-pub use engine::{Action, Engine, Inspection, Request, ResponseOutcome, VerifyOutcome};
+pub use engine::{
+    Action, Engine, Inspection, Request, ResponseOutcome, StoredEntry, VerifyOutcome,
+};
 pub use event::verify_chain;
 pub use session::State;
 

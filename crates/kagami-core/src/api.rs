@@ -8,7 +8,7 @@
 //! language adapter needs very little code.
 
 use crate::config::Config;
-use crate::engine::{Engine, Request};
+use crate::engine::{Engine, Request, StoredEntry};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -59,6 +59,14 @@ struct VerifyArgs {
 
 #[derive(Deserialize)]
 struct ContainedArgs {
+    #[serde(default)]
+    now_ms: u64,
+}
+
+#[derive(Deserialize)]
+struct RestoreArgs {
+    #[serde(default)]
+    entries: Vec<StoredEntry>,
     #[serde(default)]
     now_ms: u64,
 }
@@ -143,6 +151,16 @@ impl Runtime {
             "contained" => {
                 let a: ContainedArgs = parse(env.args)?;
                 json!({"entries": engine.contained_list(a.now_ms)})
+            }
+            "source" => {
+                let mut r: Request = parse(env.args)?;
+                engine.resolve_client_ip(&mut r);
+                let (source, target) = engine.machine_of(&r);
+                json!({"source": source, "target": target})
+            }
+            "restore" => {
+                let a: RestoreArgs = parse(env.args)?;
+                json!({"restored": engine.restore(&a.entries, a.now_ms)})
             }
             "release" => {
                 let a: ReleaseArgs = parse(env.args)?;

@@ -335,3 +335,37 @@ test('clientAddress lets the core resolve the client address and ignores forged 
     }
   }
 });
+
+// The optional shared store. Two app instances share one store.
+test('with a store, a machine contained by one instance is blocked by another', async () => {
+  const map = new Map();
+  const kv = {
+    get: async (k) => map.get(k) ?? null,
+    put: async (k, v) => void map.set(k, v),
+    delete: async (k) => void map.delete(k),
+  };
+  const opts = { secret: SECRET, mode: 'protect', decoys: { json: true }, containment: { action: 'block' }, store: kv, sinks: [], logger: quiet };
+  const start = (mw) => {
+    const app = express();
+    app.set('trust proxy', 'loopback');
+    app.use(mw);
+    app.get('/', (_req, res) => res.type('html').send(HTML));
+    app.get('/api/products', (_req, res) => res.json({ products: [] }));
+    return listen(app);
+  };
+  const firstMw = kagami(opts);
+  const first = await start(firstMw);
+  const second = await start(kagami(opts));
+  const as = (ip) => ({ headers: { 'x-forwarded-for': ip } });
+  try {
+    const field = firstMw.kagami.manifest().decoys.json_field;
+    await fetchRaw(first.base, `/api/products?${field}=admin`, as('203.0.113.60'));
+    await firstMw.kagami.flush();
+    assert.equal(map.size, 1);
+    assert.equal((await fetchRaw(second.base, '/', as('203.0.113.60'))).status, 403);
+    assert.equal((await fetchRaw(second.base, '/', as('198.51.100.60'))).status, 200);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+});

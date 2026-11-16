@@ -107,6 +107,32 @@ impl Contained {
         Some(e)
     }
 
+    /// Add a containment that another instance recorded in a shared store.
+    /// Nothing is announced, because the instance that contained the machine
+    /// already did. A machine that is already contained keeps the later
+    /// expiry. Returns true when the machine was not contained here before.
+    pub fn restore(&mut self, e: &Entry, now: u64) -> bool {
+        if e.source.is_empty() || e.until_ms <= now {
+            return false;
+        }
+        let fresh = self
+            .contain(
+                &e.source,
+                &e.target,
+                e.public,
+                e.reason,
+                now,
+                e.until_ms - now,
+            )
+            .is_some();
+        if fresh {
+            if let Some(cur) = self.map.get_mut(&e.source) {
+                cur.since_ms = e.since_ms.min(now);
+            }
+        }
+        fresh
+    }
+
     /// Release machines whose source or target equals `key`.
     pub fn release(&mut self, key: &str) -> Vec<Entry> {
         let keys: Vec<String> = self

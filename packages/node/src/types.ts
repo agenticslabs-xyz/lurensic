@@ -217,6 +217,19 @@ export interface KagamiOptions {
    * observe mode it is a dry run that reports `containment.started` events.
    */
   containment?: boolean | ContainmentOptions;
+  /**
+   * A shared key-value store, so containment survives restarts and holds
+   * across every instance of the app. Pass the store your platform already
+   * provides: Cloudflare Workers KV, Deno KV, Netlify Blobs or a Redis client
+   * (ioredis, node-redis, Upstash). Any object with get(key),
+   * put(key, value, { expirationTtl }) and delete(key) works too. Optional.
+   * A single long-running server does not need one.
+   *
+   * With the fetch and Hono adapters on Cloudflare Workers, a KV binding named
+   * KAGAMI_STORE is used automatically, and `store` may also be a function
+   * that receives the bindings, such as `(env) => env.MY_KV`.
+   */
+  store?: unknown;
   /** Where contained machines are enforced besides Kagami itself, such as a blocklist file, a webhook or a CDN. */
   enforcers?: Enforcer[];
   /** Max request body bytes inspected. Default 16 KiB. */
@@ -245,6 +258,8 @@ export interface KagamiStats {
   /** Machines handed to enforcers. */
   enforced: number;
   enforcerErrors: number;
+  /** Store reads that failed or timed out. Writes are counted in `enforcerErrors`. */
+  storeErrors: number;
   faults: number;
 }
 

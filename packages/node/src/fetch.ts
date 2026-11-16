@@ -186,7 +186,22 @@ export class FetchGuard {
    * read the settings that arrive with the first request.
    */
   kagami(platform?: unknown): Kagami {
-    this.engine ??= new Kagami({ ...this.options, env: this.options.env ?? { ...processEnv(), ...bindingsEnv(platform) } });
+    if (!this.engine) {
+      // On Cloudflare Workers, bindings arrive with the request. `store` can
+      // be a function that picks one, and a binding named KAGAMI_STORE is
+      // used without any code.
+      let store: unknown = this.options.store;
+      try {
+        if (typeof store === 'function') store = (store as (platform: unknown) => unknown)(platform);
+        else if (store === undefined && platform && typeof platform === 'object') {
+          const binding = (platform as Record<string, unknown>).KAGAMI_STORE;
+          if (binding && typeof binding === 'object') store = binding;
+        }
+      } catch {
+        store = undefined;
+      }
+      this.engine = new Kagami({ ...this.options, store, env: this.options.env ?? { ...processEnv(), ...bindingsEnv(platform) } });
+    }
     return this.engine;
   }
 
@@ -203,6 +218,7 @@ export class FetchGuard {
       k = this.kagami(platform);
       if (!k.isEnabled) return next(request);
       info = await this.describe(request, platform, k.maxBodyBytes);
+      if (k.usesStore) await k.prepare(info);
       verdict = k.inspect(info);
     } catch {
       return next(request);

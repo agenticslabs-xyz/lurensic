@@ -5,3 +5,11 @@ compatibility_date = "2025-09-01"
 [vars]
 KAGAMI_MODE = "protect"
 KAGAMI_CONTAINMENT = "block"
+
+# Optional. Kagami uses a KV binding named KAGAMI_STORE by itself, so
+# containment holds across every copy of the Worker and across deploys.
+# Create the namespace with `npx wrangler kv namespace create KAGAMI_STORE`
+# and put the id it prints here. `wrangler dev` uses a local store either way.
+[[kv_namespaces]]
+binding = "KAGAMI_STORE"
+id = "replace-with-your-namespace-id"

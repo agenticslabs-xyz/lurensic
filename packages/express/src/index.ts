@@ -206,19 +206,30 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
 
   const middleware: RequestHandler = (req, res, next) => {
     let info: HttpRequest;
-    let verdict: Verdict;
     try {
       info = toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore);
-      verdict = k.inspect(info);
     } catch {
       next();
       return;
     }
-    const proceed = (): void => {
-      if (!apply(req, res, info, verdict, true)) next();
+    const run = (): void => {
+      let verdict: Verdict;
+      try {
+        verdict = k.inspect(info);
+      } catch {
+        next();
+        return;
+      }
+      const proceed = (): void => {
+        if (!apply(req, res, info, verdict, true)) next();
+      };
+      if (verdict.delayMs > 0) setTimeout(proceed, verdict.delayMs);
+      else proceed();
     };
-    if (verdict.delayMs > 0) setTimeout(proceed, verdict.delayMs);
-    else proceed();
+    // With a shared store, a machine contained by another instance is loaded
+    // first. `prepare` never rejects and gives up quickly.
+    if (k.usesStore) k.prepare(info).then(run, run);
+    else run();
   };
 
   const errors: ErrorRequestHandler = (err, req, res, next) => {
