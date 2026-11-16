@@ -2,7 +2,7 @@
  * Verify a Kagami event log's hash chain (see docs/DESIGN.md#audit-log).
  * Works on the raw JSON lines exactly as written by the sinks.
  */
-import { createHash } from 'node:crypto';
+import { sha256Hex } from './platform.js';
 
 export type ChainResult =
   | { ok: true; events: number; instances: number }
@@ -11,7 +11,7 @@ export type ChainResult =
 const SUFFIX = /,"hash":"([0-9a-f]{64})"\}$/;
 const GENESIS = '0'.repeat(64);
 
-export function verifyChain(lines: string[]): ChainResult {
+export async function verifyChain(lines: string[]): Promise<ChainResult> {
   // A log may interleave several processes; each `instance` has its own chain.
   const prevByInstance = new Map<string, string>();
   let count = 0;
@@ -34,7 +34,7 @@ export function verifyChain(lines: string[]): ChainResult {
     if (expected !== undefined && parsed.prev_hash !== expected && !restart) {
       return { ok: false, line: i + 1, reason: 'chain broken (event missing, reordered or inserted)' };
     }
-    const digest = createHash('sha256').update(`${parsed.prev_hash}\n${body}`).digest('hex');
+    const digest = await sha256Hex(`${parsed.prev_hash}\n${body}`);
     if (digest !== m[1]) return { ok: false, line: i + 1, reason: 'hash mismatch (event was modified)' };
     prevByInstance.set(key, m[1]!);
     count++;

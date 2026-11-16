@@ -1,0 +1,57 @@
+{
+  "name": "@agenticslabs/kagami-hono",
+  "version": "0.1.0",
+  "description": "Kagami middleware for Hono, on Node, Bun, Deno and Cloudflare Workers. It detects AI agents and automated attackers with tripwires that instructions to the agent cannot get around.",
+  "license": "Apache-2.0",
+  "author": "Agentics Labs (https://agenticslabs.xyz)",
+  "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agenticslabs-xyz/kagami.git",
+    "directory": "packages/hono"
+  },
+  "bugs": {
+    "url": "https://github.com/agenticslabs-xyz/kagami/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "keywords": [
+    "hono",
+    "middleware",
+    "security",
+    "deception",
+    "honeypot",
+    "honeytoken",
+    "ai-agents",
+    "cloudflare-workers"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@agenticslabs/kagami": "workspace:*"
+  },
+  "peerDependencies": {
+    "hono": ">=4"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "hono": "^4.13.18"
+  }
+}

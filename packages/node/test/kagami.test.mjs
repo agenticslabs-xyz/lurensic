@@ -71,13 +71,13 @@ test('events flow to sinks and form a verifiable chain', async () => {
   await k.flush();
   const rules = mem.events.map((e) => e.rule);
   assert.deepEqual(rules, ['system.started', 'bait.path', 'client.scanner', 'session.flagged', 'payload.sqli']);
-  assert.deepEqual(verifyChain(mem.lines), { ok: true, events: 5, instances: 1 });
+  assert.deepEqual(await verifyChain(mem.lines), { ok: true, events: 5, instances: 1 });
 
   const edited = [...mem.lines];
   edited[1] = edited[1].replace('"severity":"medium"', '"severity":"low"');
-  assert.equal(verifyChain(edited).ok, false);
+  assert.equal((await verifyChain(edited)).ok, false);
   const removed = mem.lines.filter((_, i) => i !== 2);
-  assert.deepEqual(verifyChain(removed), { ok: false, line: 3, reason: 'chain broken (event missing, reordered or inserted)' });
+  assert.deepEqual(await verifyChain(removed), { ok: false, line: 3, reason: 'chain broken (event missing, reordered or inserted)' });
 });
 
 test('sinks filter by severity', async () => {

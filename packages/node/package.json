@@ -1,7 +1,7 @@
 {
   "name": "@agenticslabs/kagami",
   "version": "0.1.0",
-  "description": "Kagami for Node.js. A framework-agnostic engine, event sinks and CLI for deception-based detection of AI-driven and automated attacks.",
+  "description": "Kagami runtime for Node, Bun, Deno and Cloudflare Workers. The engine, event sinks, enforcers, a web-standard fetch adapter and the CLI, for deception-based detection of AI-driven and automated attacks.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
   "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
@@ -19,6 +19,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "workerd": "./dist/workerd.js",
       "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
@@ -30,7 +31,10 @@
     "dist",
     "wasm"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/index.js",
+    "./dist/workerd.js"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -41,7 +45,11 @@
     "honeytoken",
     "ai-agents",
     "waf",
-    "intrusion-detection"
+    "intrusion-detection",
+    "cloudflare-workers",
+    "deno",
+    "bun",
+    "fetch"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

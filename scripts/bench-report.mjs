@@ -41,7 +41,7 @@ const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
 const eventLines = readLines(join(runDir, 'kagami-events.jsonl'));
 const events = eventLines.map((l) => JSON.parse(l));
 const access = readLines(join(runDir, 'access.jsonl')).map((l) => JSON.parse(l));
-const chain = verifyChain(eventLines);
+const chain = await verifyChain(eventLines);
 
 // ---------- analysis ----------
 

@@ -6,9 +6,9 @@
  * Fail-open is a hard rule. No public method throws, and any internal fault
  * results in the request passing through untouched.
  */
-import { randomBytes } from 'node:crypto';
 import { Core, KagamiCoreError } from './core.js';
 import { EnforcerPipeline } from './enforce.js';
+import { processEnv, hasProcess, randomHex, type Env } from './platform.js';
 import { consoleSink, Pipeline } from './sinks.js';
 import type { ContainedMachine, Enforcer, HttpRequest, KagamiOptions, KagamiStats, Mode, ResponseSample, Verdict } from './types.js';
 
@@ -73,14 +73,14 @@ function sampleHeaders(headers: Array<[string, string]>): Array<[string, string]
 }
 
 /** KAGAMI_CONTAINMENT is on, true, 1, shadow or block. Anything else leaves containment off. */
-function envContainment(): KagamiOptions['containment'] {
-  const v = process.env.KAGAMI_CONTAINMENT?.trim().toLowerCase() ?? '';
+function envContainment(env: Env): KagamiOptions['containment'] {
+  const v = env.KAGAMI_CONTAINMENT?.trim().toLowerCase() ?? '';
   if (v === 'shadow' || v === 'block') return { action: v };
   return ['on', 'true', '1', 'yes'].includes(v) ? true : undefined;
 }
 
-function envFlag(name: string): boolean {
-  const v = process.env[name];
+function envFlag(env: Env, name: string): boolean {
+  const v = env[name];
   return v === '1' || v === 'true' || v === 'yes';
 }
 
@@ -155,15 +155,16 @@ export class Kagami {
         /* never throw from logging */
       }
     };
-    const envMode = process.env.KAGAMI_MODE;
+    const env = options.env ?? processEnv();
+    const envMode = env.KAGAMI_MODE;
     this.mode = options.mode ?? (envMode === 'protect' || envMode === 'observe' ? envMode : 'observe');
     this.maxBodyBytes = options.maxBodyBytes ?? 16 * 1024;
-    this.instanceId = options.instanceId ?? randomBytes(6).toString('hex');
+    this.instanceId = options.instanceId ?? randomHex(6);
     this.pipeline = new Pipeline(options.sinks ?? [consoleSink()], this.warn);
-    this.enabled = options.enabled !== false && !envFlag('KAGAMI_DISABLED');
+    this.enabled = options.enabled !== false && !envFlag(env, 'KAGAMI_DISABLED');
     // Containment can be switched on from the environment as well, so a
     // deployment can be configured without code changes.
-    options = { ...options, containment: options.containment ?? envContainment() };
+    options = { ...options, containment: options.containment ?? envContainment(env) };
     // Enforcers only start when Kagami runs, so the kill switch also stops them.
     const enforcers = this.enabled ? [...(options.enforcers ?? [])] : [];
     this.enforcement = new EnforcerPipeline(enforcers, this.warn);
@@ -172,9 +173,12 @@ export class Kagami {
     }
     if (!this.enabled) return;
 
-    let secret = options.secret ?? process.env.KAGAMI_SECRET ?? '';
+    let secret = options.secret ?? env.KAGAMI_SECRET ?? '';
     if (!secret) {
-      if (process.env.NODE_ENV === 'production') {
+      // A temporary secret is only for local development. In production, and
+      // on runtimes without a process such as Cloudflare Workers, where every
+      // copy of the app would get a different secret, Kagami stays off instead.
+      if (env.NODE_ENV === 'production' || !hasProcess()) {
         this.warn(
           '[kagami] KAGAMI_SECRET is not set, so Kagami is disabled and requests pass through untouched. ' +
             'Generate a secret with `npx @agenticslabs/kagami secret`.',
@@ -182,7 +186,7 @@ export class Kagami {
         this.enabled = false;
         return;
       }
-      secret = randomBytes(32).toString('hex');
+      secret = randomHex(32);
       this.warn('[kagami] No KAGAMI_SECRET set. Using a temporary development secret, so decoys change on every restart.');
     }
     this.coreConfig = buildCoreConfig(options, secret, this.mode);

@@ -10,8 +10,7 @@
  * - By default it only receives public addresses, so a private network,
  *   a loopback test or a misconfigured proxy is never pushed out.
  */
-import { createHmac, randomBytes } from 'node:crypto';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { defer, hmacSha256Hex } from './platform.js';
 import type { ContainedMachine, Enforcer } from './types.js';
 
 const MAX_QUEUE = 10_000;
@@ -54,7 +53,7 @@ export class EnforcerPipeline {
 
   private schedule(): void {
     if (this.running || this.queue.length === 0) return;
-    const run = new Promise<void>((resolve) => setImmediate(resolve)).then(() => this.drain());
+    const run = new Promise<void>((resolve) => defer(resolve)).then(() => this.drain());
     this.running = run;
     const done = (): void => {
       if (this.running === run) this.running = null;
@@ -147,94 +146,6 @@ export function formatBlocklist(machines: ContainedMachine[], format: BlocklistF
 }
 
 /**
- * Keep a blocklist file up to date for any firewall, proxy or WAF that reads
- * one. The file is replaced atomically (write then rename), so a reader never
- * sees a half-written list. Expired entries are removed on a timer. State is
- * kept in `<path>.state.json`, so the list survives restarts of the app.
- *
- * Reload the consumer after a change, for example with a file watcher, a
- * cron job, or `onChange`.
- */
-export function blocklistFile(opts: {
-  path: string;
-  format?: BlocklistFormat;
-  /** Include private addresses. Default false. */
-  includePrivate?: boolean;
-  /** How often expired entries are removed. Default 60000 (one minute). */
-  sweepMs?: number;
-  /** Called after the file has been rewritten. */
-  onChange?: (path: string) => void | Promise<void>;
-}): Enforcer & { entries(): ContainedMachine[] } {
-  if (!opts?.path) throw new TypeError('blocklistFile requires a `path` option');
-  const format = opts.format ?? 'plain';
-  const statePath = `${opts.path}.state.json`;
-  const entries = new Map<string, ContainedMachine>();
-  let loaded: Promise<void> | null = null;
-  let timer: NodeJS.Timeout | undefined;
-  let writing: Promise<void> = Promise.resolve();
-
-  const load = (): Promise<void> =>
-    (loaded ??= readFile(statePath, 'utf8').then(
-      (text) => {
-        const parsed = JSON.parse(text) as { entries?: ContainedMachine[] };
-        for (const m of parsed.entries ?? []) if (m?.target && m.until > Date.now()) entries.set(m.target, m);
-      },
-      () => undefined,
-    ));
-
-  const atomicWrite = async (path: string, text: string): Promise<void> => {
-    const tmp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
-    await writeFile(tmp, text, { mode: 0o640 });
-    await rename(tmp, path);
-  };
-
-  const persist = (): Promise<void> => {
-    // A failed write or onChange must not stop later writes, so the chain
-    // continues after a rejection. The caller still sees this write's error.
-    writing = writing.catch(() => undefined).then(async () => {
-      const now = Date.now();
-      for (const [k, m] of entries) if (m.until <= now) entries.delete(k);
-      const list = [...entries.values()];
-      await atomicWrite(statePath, JSON.stringify({ entries: list }) + '\n');
-      await atomicWrite(opts.path, formatBlocklist(list, format, now));
-      await opts.onChange?.(opts.path);
-    });
-    return writing;
-  };
-
-  return {
-    name: 'blocklist-file',
-    publicOnly: !opts.includePrivate,
-    entries: () => [...entries.values()],
-    start() {
-      void load().then(persist).catch(() => undefined);
-      timer = setInterval(() => {
-        const now = Date.now();
-        if ([...entries.values()].some((m) => m.until <= now)) void persist().catch(() => undefined);
-      }, opts.sweepMs ?? 60_000);
-      timer.unref();
-    },
-    async contain(machines) {
-      await load();
-      for (const m of machines) {
-        const prev = entries.get(m.target);
-        entries.set(m.target, prev ? { ...m, until: Math.max(prev.until, m.until) } : m);
-      }
-      await persist();
-    },
-    async release(machines) {
-      await load();
-      for (const m of machines) entries.delete(m.target);
-      await persist();
-    },
-    async close() {
-      if (timer) clearInterval(timer);
-      await writing.catch(() => undefined);
-    },
-  };
-}
-
-/**
  * POST each batch as JSON to your own endpoint, for a SOAR, a serverless
  * function that updates a cloud WAF, or a firewall API.
  *
@@ -267,7 +178,7 @@ export function webhookEnforcer(opts: {
     const headers: Record<string, string> = { 'content-type': 'application/json', ...(opts.headers ?? {}) };
     if (opts.secret) {
       const t = Math.floor(Date.now() / 1000);
-      headers['kagami-signature'] = `t=${t},v1=${createHmac('sha256', opts.secret).update(`${t}.${body}`).digest('hex')}`;
+      headers['kagami-signature'] = `t=${t},v1=${await hmacSha256Hex(opts.secret, `${t}.${body}`)}`;
     }
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {

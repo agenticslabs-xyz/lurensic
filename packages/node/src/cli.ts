@@ -53,7 +53,7 @@ async function main(): Promise<void> {
         process.exitCode = 2;
         return;
       }
-      const res = verifyChain(readFileSync(file, 'utf8').split('\n'));
+      const res = await verifyChain(readFileSync(file, 'utf8').split('\n'));
       if (res.ok) {
         process.stdout.write(`Chain intact. Checked ${res.events} events across ${res.instances} instance(s).\n`);
       } else {

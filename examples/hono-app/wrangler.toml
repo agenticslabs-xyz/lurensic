@@ -1,0 +1,7 @@
+name = "hono-app"
+main = "worker.mjs"
+compatibility_date = "2025-09-01"
+
+[vars]
+KAGAMI_MODE = "protect"
+KAGAMI_CONTAINMENT = "block"

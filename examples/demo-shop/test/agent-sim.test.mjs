@@ -169,7 +169,7 @@ test('persona 4, the noisy scanner, sprays payloads and enumerates a wordlist', 
 
 test('the full audit log is intact and contains no secrets', async () => {
   await app.kagami.flush();
-  assert.equal(verifyChain(sink.lines).ok, true);
+  assert.equal((await verifyChain(sink.lines)).ok, true);
   const all = sink.lines.join('\n');
   assert.ok(!all.includes('Ridgeline!2024'), 'real passwords never logged');
   assert.ok(!/sk_live_[A-Za-z0-9]{24}/.test(all), 'honeytokens are masked in logs');

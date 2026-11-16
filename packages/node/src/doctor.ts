@@ -84,7 +84,7 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
     const v = k.inspect({ ip: '198.51.100.1', method: 'GET', host: 'doctor.local', path: '/search', query: "q=1'%20OR%20'1'%3D'1", headers: [['user-agent', UA]] });
     await k.close();
     if (k.isEnabled && v.rules.includes('payload.sqli')) add({ id: 'engine', status: 'pass', message: 'The Kagami engine loads and detects a test attack.' });
-    else add({ id: 'engine', status: 'fail', message: 'The Kagami engine did not detect a test attack.', fix: 'Reinstall @agenticslabs/kagami. If KAGAMI_WASM_PATH is set, check that it points at kagami_core.wasm.' });
+    else add({ id: 'engine', status: 'fail', message: 'The Kagami engine did not detect a test attack.', fix: 'Reinstall @agenticslabs/kagami. If you bundle the app, check that the bundler keeps the package entry, which loads the engine.' });
   } catch (err) {
     add({ id: 'engine', status: 'fail', message: `The Kagami engine failed to load. ${(err as Error)?.message ?? err}`, fix: 'Reinstall @agenticslabs/kagami. Node 20 or newer is required.' });
   }

@@ -2,35 +2,22 @@
  * Bridge to the WebAssembly core (ABI v1). The module imports nothing, so it
  * has no clock, randomness, filesystem or network access. All I/O stays in
  * this package.
+ *
+ * The engine is handed in by the package entry point. On Node, Bun and Deno
+ * it is embedded in the JavaScript as base64. On Cloudflare Workers, which
+ * only run WebAssembly that was compiled at deploy time, the `workerd` entry
+ * imports the .wasm file and the bundler compiles it.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 const SUPPORTED_ABI = 1;
 
-/**
- * Locate the core module. Checks `KAGAMI_WASM_PATH` first, then the package
- * layout (`dist/../wasm/`), then the folder of the running file (single-file
- * bundles).
- */
-function wasmPath(): string {
-  const candidates: string[] = [];
-  if (process.env.KAGAMI_WASM_PATH) candidates.push(process.env.KAGAMI_WASM_PATH);
-  for (const rel of ['../wasm/kagami_core.wasm', './kagami_core.wasm']) {
-    try {
-      candidates.push(fileURLToPath(new URL(rel, import.meta.url)));
-    } catch {
-      /* import.meta.url unavailable in some bundles */
-    }
-  }
-  const found = candidates.find((p) => existsSync(p));
-  if (!found) {
-    throw new KagamiCoreError(
-      'wasm_missing',
-      `kagami_core.wasm not found. Looked in ${candidates.join(', ')}. Set KAGAMI_WASM_PATH to its location.`,
-    );
-  }
-  return found;
+type EngineSource = WebAssembly.Module | (() => WebAssembly.Module | Uint8Array);
+let source: EngineSource | undefined;
+
+/** Called once by the package entry point. */
+export function setEngine(s: EngineSource): void {
+  source = s;
+  compiled = undefined;
 }
 
 interface CoreExports {
@@ -53,7 +40,11 @@ export class KagamiCoreError extends Error {
 let compiled: WebAssembly.Module | undefined;
 
 function wasmModule(): WebAssembly.Module {
-  compiled ??= new WebAssembly.Module(readFileSync(wasmPath()));
+  if (compiled) return compiled;
+  if (!source) throw new KagamiCoreError('wasm_missing', 'The Kagami engine was not loaded. Import Kagami from @agenticslabs/kagami or an adapter package.');
+  if (source instanceof WebAssembly.Module) return (compiled = source);
+  const loaded = source();
+  compiled = loaded instanceof WebAssembly.Module ? loaded : new WebAssembly.Module(loaded);
   return compiled;
 }
 

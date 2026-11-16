@@ -11,3 +11,6 @@ packages/node/wasm/
 bench-runs/
 .kagami-secret
 .bench-private-words
+packages/node/src/engine-bytes.ts
+.wrangler/
+.dev.vars

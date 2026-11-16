@@ -6,8 +6,7 @@
  *   already redacted secrets. Chat alerts are escaped and never unfurl links
  *   supplied by an attacker. Webhooks never follow redirects.
  */
-import { createHmac } from 'node:crypto';
-import { appendFile } from 'node:fs/promises';
+import { defer, hmacSha256Hex, writeLine } from './platform.js';
 import { SEVERITY_RANK, type EventRecord, type KagamiEvent, type Severity, type Sink } from './types.js';
 
 const MAX_QUEUE = 10_000;
@@ -48,7 +47,7 @@ export class Pipeline {
   private schedule(): void {
     if (this.scheduled || this.queue.length === 0) return;
     this.scheduled = true;
-    setImmediate(() => {
+    defer(() => {
       this.scheduled = false;
       void this.drain();
     });
@@ -105,9 +104,13 @@ export class Pipeline {
   }
 }
 
-/** JSON lines on stdout. This is the default sink, and any log shipper can collect it. */
-export function consoleSink(opts: { minSeverity?: Severity; stream?: NodeJS.WritableStream } = {}): Sink {
-  const stream = opts.stream ?? process.stdout;
+/**
+ * JSON lines on stdout. This is the default sink, and any log shipper can
+ * collect it. On runtimes without stdout, such as Cloudflare Workers, each
+ * line goes to `console.log`, which ends up in the platform's logs.
+ */
+export function consoleSink(opts: { minSeverity?: Severity; stream?: { write(text: string): unknown } } = {}): Sink {
+  const stream = opts.stream ?? { write: writeLine };
   return {
     name: 'console',
     minSeverity: opts.minSeverity ?? 'low',
@@ -117,17 +120,6 @@ export function consoleSink(opts: { minSeverity?: Severity; stream?: NodeJS.Writ
   };
 }
 
-/** Append JSON lines to a file. The file is created with owner-only permissions. */
-export function fileSink(opts: { path: string; minSeverity?: Severity }): Sink {
-  if (!opts?.path) throw new TypeError('fileSink requires a `path` option');
-  return {
-    name: 'file',
-    minSeverity: opts.minSeverity ?? 'info',
-    async write(records) {
-      await appendFile(opts.path, records.map((r) => r.line).join('\n') + '\n', { mode: 0o600 });
-    },
-  };
-}
 
 function assertSafeUrl(raw: string, who: string): URL {
   let url: URL;
@@ -185,7 +177,7 @@ export function webhookSink(opts: {
       const headers: Record<string, string> = { ...(opts.headers ?? {}) };
       if (opts.secret) {
         const t = Math.floor(Date.now() / 1000);
-        const sig = createHmac('sha256', opts.secret).update(`${t}.${body}`).digest('hex');
+        const sig = await hmacSha256Hex(opts.secret, `${t}.${body}`);
         headers['kagami-signature'] = `t=${t},v1=${sig}`;
       }
       await post(url, body, headers, opts.timeoutMs ?? 5000);

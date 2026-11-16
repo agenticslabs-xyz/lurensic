@@ -162,7 +162,7 @@ export interface ContainmentOptions {
 }
 
 export interface KagamiOptions {
-  /** Deployment secret (>= 32 chars). Defaults to `process.env.KAGAMI_SECRET`. */
+  /** Deployment secret (>= 32 chars). Defaults to KAGAMI_SECRET from the environment. */
   secret?: string;
   /** `observe` (default) never changes a response. `protect` enables deception. Also read from `KAGAMI_MODE`. */
   mode?: Mode;
@@ -225,6 +225,12 @@ export interface KagamiOptions {
   maxSessions?: number;
   /** Identifies this process in events. Random by default. */
   instanceId?: string;
+  /**
+   * Where KAGAMI_SECRET, KAGAMI_MODE, KAGAMI_CONTAINMENT and KAGAMI_DISABLED
+   * are read from. Defaults to `process.env`. The fetch and Hono adapters pass
+   * the Cloudflare Workers bindings here, since Workers have no `process.env`.
+   */
+  env?: Record<string, string | undefined>;
   /** Where Kagami reports its own problems. Defaults to `console`. */
   logger?: { warn(message: string): void };
 }
