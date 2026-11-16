@@ -7,7 +7,7 @@
  * It is built into the Node package. When CLOUDFLARE_API_TOKEN,
  * CLOUDFLARE_ACCOUNT_ID and KAGAMI_CLOUDFLARE_LIST_ID are set and containment
  * is on, Kagami adds it automatically. `npx @agenticslabs/kagami cloudflare
- * setup` creates the list.
+ * setup --zone <domain>` creates the list and the WAF rule.
  *
  * The list is the shared state, so this works across restarts and across
  * several app instances. Each item Kagami adds carries a comment such as

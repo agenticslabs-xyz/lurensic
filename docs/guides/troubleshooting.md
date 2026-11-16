@@ -47,5 +47,16 @@ handler rejects unknown form fields. Turn that decoy off, or list the field's ro
 missing setting. Check that containment is on and the mode is protect, and run `npx @agenticslabs/kagami cloudflare
 status`. Private and loopback addresses are never added, so a local test produces no Cloudflare entries.
 
+**Machines are in the Cloudflare list but still reach the app.** The zone has no Kagami WAF rule, or the rule is off.
+Run `npx @agenticslabs/kagami cloudflare setup --zone <your domain>` with a token that has Zone Read and Zone WAF Edit.
+It adds the rule when it is missing and says when it is turned off.
+
+**Cloudflare setup says it rejected the token.** The value in `CLOUDFLARE_API_TOKEN` is incomplete, expired or deleted.
+Copy the whole token again, without quotes or spaces.
+
+**Cloudflare setup could not add the WAF rule.** The message names the cause. A token without Zone Read and Zone WAF Edit
+for that zone, a zone in another Cloudflare account than the list, and the five custom rule limit on Free plans are the
+usual ones. The list is still created, and setup prints the rule to add by hand.
+
 **Kagami seems to do nothing in protect mode.** Run the doctor. If `protect` is INFO, check the order of your
 middleware and that `KAGAMI_MODE` or `mode` is `protect`.

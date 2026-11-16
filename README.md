@@ -148,7 +148,7 @@ The [getting started guide](docs/guides/getting-started.md) walks through each s
 |---|---|---|
 | run Kagami | `KAGAMI_SECRET` | A random value you generate yourself with `npx @agenticslabs/kagami secret`. Not an account or an API key. No sign-up, no service and no telemetry. |
 | get alerts by webhook or Slack | A webhook URL, and a signing secret you choose | Optional |
-| block contained machines at Cloudflare | `CLOUDFLARE_API_TOKEN` (one permission, **Account Filter Lists Edit**), `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID` | Optional. Set them and Kagami does the rest. Works on every Cloudflare plan, including Free. See the [Cloudflare guide](docs/guides/cloudflare.md). |
+| block contained machines at Cloudflare | `CLOUDFLARE_API_TOKEN` (one permission, **Account Filter Lists Edit**), `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID` | Optional. `npx @agenticslabs/kagami cloudflare setup --zone <your domain>` creates the list and the WAF rule once, with a setup token you delete afterwards. Then Kagami does the rest. Works on every Cloudflare plan, including Free. See the [Cloudflare guide](docs/guides/cloudflare.md). |
 
 Without a secret in production, Kagami switches itself off and lets requests through, so a missing setting can
 never take your site down.

@@ -19,7 +19,7 @@ const verdict = kagami.inspect({ ip, method, host, path, query, headers, body })
 npx @agenticslabs/kagami secret                    # generate a deployment secret
 npx @agenticslabs/kagami doctor --url http://localhost:3000   # check the setup (add --json for agents)
 npx @agenticslabs/kagami verify-log events.jsonl   # check a log's hash chain
-npx @agenticslabs/kagami cloudflare setup          # create the Cloudflare IP list (also status, sweep)
+npx @agenticslabs/kagami cloudflare setup --zone example.com   # create the Cloudflare IP list and WAF rule (also status, sweep)
 ```
 
 ## Sinks

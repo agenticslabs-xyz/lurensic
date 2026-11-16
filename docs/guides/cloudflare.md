@@ -19,31 +19,74 @@ WAF custom rule.
 
 | Environment variable | Where it comes from |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard, My Profile, API Tokens, Create Token. Give it one account permission, **Account Filter Lists Edit**. It cannot change DNS, zones or anything else. |
-| `CLOUDFLARE_ACCOUNT_ID` | The account ID shown on your Cloudflare dashboard |
+| `CLOUDFLARE_API_TOKEN` | A runtime token with one account permission, **Account Filter Lists Edit**. It cannot change DNS, zones, rules or anything else. See step 1. |
+| `CLOUDFLARE_ACCOUNT_ID` | The account ID shown on your Cloudflare dashboard. Setup prints it too. |
 | `KAGAMI_CLOUDFLARE_LIST_ID` | Printed by `npx @agenticslabs/kagami cloudflare setup` |
 
 When all three are set and containment is on, Kagami sends contained machines to Cloudflare by itself.
 
-## 1. Create the list
+## 1. Create the tokens
+
+Kagami recommends two API tokens, so the token your app keeps can do as little as possible.
+
+| Token | Permissions | Lifetime |
+|---|---|---|
+| Setup token | **Account Filter Lists Edit**, **Zone Read**, **Zone WAF Edit**, limited to the zones you protect | Used once by `cloudflare setup`, then deleted |
+| Runtime token | **Account Filter Lists Edit** only | Kept by the app as `CLOUDFLARE_API_TOKEN` |
+
+Create both under Manage Account, Account API Tokens, Create Token. Run setup without a token and it prints a link that
+opens Create Token with the zone permissions already selected.
 
 ```bash
-export CLOUDFLARE_API_TOKEN=...
-export CLOUDFLARE_ACCOUNT_ID=...
 npx @agenticslabs/kagami cloudflare setup
 ```
 
-The command creates the IP list `kagami_contained` (or finds it) and prints `KAGAMI_CLOUDFLARE_LIST_ID`. The token is
-read from the environment only, never from the command line, so it does not end up in shell history.
+Cloudflare publishes no link key for Account Filter Lists, so add that permission by hand on the Create Token page.
 
-## 2. Add the WAF rule
+One token with all three permissions also works. It is simpler, but the app then holds a token that can change your WAF
+rules.
 
-In each zone you protect, go to Security, WAF, Custom rules, Create rule.
+## 2. Run setup
+
+Put the setup token in the environment and name the domain you protect.
+
+```bash
+export CLOUDFLARE_API_TOKEN=<setup token>
+export CLOUDFLARE_ACCOUNT_ID=<account id>
+npx @agenticslabs/kagami cloudflare setup --zone example.com
+```
+
+The command does three things.
+
+1. It creates the IP list `kagami_contained`, or finds it when it already exists.
+2. It adds a WAF custom rule with the expression `(ip.src in $kagami_contained)` and the action Block to the zone.
+3. It prints the settings for the app and lists the permissions it used.
+
+| Option | Meaning |
+|---|---|
+| `--zone <domain or zone id>` | The zone to protect. A host inside the zone such as `shop.example.com`, or a pasted URL, also works. Repeat it for several zones. |
+| `--action managed_challenge` | Use Managed Challenge instead of Block, for a softer response |
+| `--name <list name>` | Use another list name than `kagami_contained` |
+
+Setup is safe to run again. It never replaces rules you already have. It adds one rule at the end of the zone's custom
+rules, and when a rule with the Kagami expression or a description starting with "Kagami" is already there, it changes
+nothing. If `CLOUDFLARE_ACCOUNT_ID` is not set and the token can see exactly one account, setup uses that account.
+
+The token is read from the environment only, never from the command line, so it does not end up in shell history.
+
+When setup is done, delete the setup token and give the app the runtime token.
+
+### Adding the rule by hand
+
+Without `--zone`, setup only creates the list and prints the rule to add yourself. In each zone you protect, go to
+Security, WAF, Custom rules, Create rule.
 
 | Field | Value |
 |---|---|
 | Expression | `(ip.src in $kagami_contained)` |
 | Action | Block, or Managed Challenge for a softer response |
+
+Free plans allow five custom rules per zone. The Kagami rule uses one of them.
 
 ## 3. Configure the app
 

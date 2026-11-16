@@ -3,18 +3,41 @@
 // search and cursor pagination, and asynchronous bulk operations).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cloudflareEnforcer, itemComment, itemExpiry, Kagami, ListsClient } from '../dist/index.js';
+import {
+  cloudflareEnforcer,
+  cloudflareSetup,
+  isKagamiRule,
+  itemComment,
+  itemExpiry,
+  Kagami,
+  ListsClient,
+  SETUP_PERMISSION_KEYS,
+  tokenLink,
+  zoneCandidates,
+} from '../dist/index.js';
 
 const ACCOUNT = 'a'.repeat(32);
 const LIST = 'b'.repeat(32);
+const ZONE = 'c'.repeat(32);
+const RULESET = 'd'.repeat(32);
 const TOKEN = 'test-token-never-logged';
 const fast = () => Promise.resolve();
 
 /** A fake Cloudflare API. Bulk operations stay pending for one poll. */
-function fakeCloudflare({ pageSize = 2, failFirst429 = false } = {}) {
+function fakeCloudflare({
+  pageSize = 2,
+  failFirst429 = false,
+  accounts = [{ id: ACCOUNT, name: 'Main' }],
+  zones = [{ id: ZONE, name: 'example.com', status: 'active', account: { id: ACCOUNT, name: 'Main' } }],
+  entrypoint = undefined,
+  denyZones = false,
+} = {}) {
   const items = [];
+  const lists = [];
   const ops = new Map();
   const calls = [];
+  // The zone's custom rules entry point ruleset, or undefined while the zone has none.
+  const waf = { entrypoint: entrypoint && { ...entrypoint, rules: [...(entrypoint.rules ?? [])] } };
   let seq = 0;
   let throttled = !failFirst429;
   const json = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -65,11 +88,39 @@ function fakeCloudflare({ pageSize = 2, failFirst429 = false } = {}) {
       const after = start + pageSize < all.length ? String(start + pageSize) : undefined;
       return ok(page, { result_info: { cursors: after ? { after } : {} } });
     }
-    if (p === `/accounts/${ACCOUNT}/rules/lists` && method === 'GET') return ok([]);
-    if (p === `/accounts/${ACCOUNT}/rules/lists` && method === 'POST') return ok({ id: LIST, name: body.name, kind: body.kind });
+    if (p === `/accounts/${ACCOUNT}/rules/lists` && method === 'GET') return ok(lists);
+    if (p === `/accounts/${ACCOUNT}/rules/lists` && method === 'POST') {
+      const list = { id: LIST, name: body.name, kind: body.kind };
+      lists.push(list);
+      return ok(list);
+    }
+    if (p === '/accounts' && method === 'GET') return ok(accounts);
+    if (p.startsWith('/zones') && denyZones) return json(403, { success: false, errors: [{ code: 10000, message: 'Authentication error' }] });
+    if (p === '/zones' && method === 'GET') return ok(zones.filter((z) => z.name === u.searchParams.get('name')));
+    const zoneById = /^\/zones\/(\w+)$/.exec(p);
+    if (zoneById && method === 'GET') {
+      const z = zones.find((x) => x.id === zoneById[1]);
+      return z ? ok(z) : json(404, { success: false, errors: [{ code: 1001, message: 'Invalid zone identifier' }] });
+    }
+    if (p === `/zones/${ZONE}/rulesets/phases/http_request_firewall_custom/entrypoint`) {
+      if (method === 'GET') {
+        return waf.entrypoint
+          ? ok(waf.entrypoint)
+          : json(404, { success: false, errors: [{ code: 10003, message: 'could not find entrypoint ruleset in the http_request_firewall_custom phase' }] });
+      }
+      if (method === 'PUT') {
+        assert.equal(waf.entrypoint, undefined, 'PUT must never replace an existing entry point ruleset');
+        waf.entrypoint = { id: RULESET, phase: 'http_request_firewall_custom', rules: body.rules.map((r, i) => ({ id: `r${i}`, ...r })) };
+        return ok(waf.entrypoint);
+      }
+    }
+    if (p === `/zones/${ZONE}/rulesets/${RULESET}/rules` && method === 'POST') {
+      waf.entrypoint.rules.push({ id: `r${waf.entrypoint.rules.length}`, ...body });
+      return ok(waf.entrypoint);
+    }
     return json(404, { success: false, errors: [{ code: 7003, message: 'not found' }] });
   };
-  return { fetch, items, calls };
+  return { fetch, items, lists, calls, waf };
 }
 
 const enforcer = (cf, extra = {}) =>
@@ -235,4 +286,157 @@ test('cloudflare: false keeps Cloudflare off even with the settings present', as
     assert.equal(cf.items.length, 0);
     assert.equal(k.contained().length, 1, 'Kagami itself still contains the machine');
   });
+});
+
+// kagami cloudflare setup. Creates the list and the WAF custom rule, never
+// replaces existing rules, and changes nothing on a second run.
+
+const setup = (cf, extra = {}) =>
+  cloudflareSetup({ apiToken: TOKEN, accountId: ACCOUNT, fetch: cf.fetch, sleep: fast, zones: ['example.com'], ...extra });
+
+const OTHER_RULE = { id: 'mine', action: 'block', expression: '(ip.src.country eq "XX")', description: 'set by hand', enabled: true };
+
+test('setup without a token explains the two tokens and links to Create Token', async () => {
+  const res = await cloudflareSetup({ apiToken: '' });
+  assert.equal(res.ok, false);
+  assert.match(res.output, /CLOUDFLARE_API_TOKEN is not set/);
+  assert.match(res.output, /Account Filter Lists Edit, Zone Read, Zone WAF Edit/);
+  const link = res.output.split('\n').map((l) => l.trim()).find((l) => l.includes('permissionGroupKeys='));
+  const url = new URL(link);
+  assert.equal(url.origin + url.pathname, 'https://dash.cloudflare.com/');
+  assert.equal(url.searchParams.get('to'), '/:account/api-tokens');
+  assert.deepEqual(JSON.parse(url.searchParams.get('permissionGroupKeys')), SETUP_PERMISSION_KEYS);
+  assert.equal(url.searchParams.get('name'), 'Kagami setup');
+  assert.ok(!link.includes('+'), 'spaces are encoded as %20');
+  assert.equal(
+    tokenLink([{ key: 'zone', type: 'read' }], 'x'),
+    'https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%5D&name=x',
+  );
+});
+
+test('setup creates the entry point ruleset when the zone has none', async () => {
+  const cf = fakeCloudflare();
+  const res = await setup(cf);
+  assert.equal(res.ok, true, res.output);
+  assert.deepEqual(cf.lists.map((l) => l.name), ['kagami_contained']);
+  assert.deepEqual(
+    cf.waf.entrypoint.rules.map(({ expression, action, enabled }) => ({ expression, action, enabled })),
+    [{ expression: '(ip.src in $kagami_contained)', action: 'block', enabled: true }],
+  );
+  assert.match(res.output, /Added the WAF custom rule to example\.com/);
+  assert.ok(res.output.includes(`KAGAMI_CLOUDFLARE_LIST_ID=${LIST}`));
+  assert.match(res.output, /Zone WAF Edit, to add the custom rule/);
+  assert.match(res.output, /delete it now/);
+  assert.ok(!res.output.includes(TOKEN));
+});
+
+test('setup adds one rule with POST and keeps the rules already there', async () => {
+  const cf = fakeCloudflare({ entrypoint: { id: RULESET, rules: [OTHER_RULE] } });
+  const res = await setup(cf, { action: 'managed_challenge' });
+  assert.equal(res.ok, true, res.output);
+  assert.equal(cf.calls.filter((c) => c.method === 'PUT').length, 0, 'never PUT over existing rules');
+  const posts = cf.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/rules'));
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].body, {
+    description: 'Kagami blocks contained machines',
+    expression: '(ip.src in $kagami_contained)',
+    action: 'managed_challenge',
+    enabled: true,
+  });
+  assert.deepEqual(cf.waf.entrypoint.rules.map((r) => r.id), ['mine', 'r1']);
+});
+
+test('a second setup run changes nothing', async () => {
+  const cf = fakeCloudflare();
+  await setup(cf);
+  const before = cf.calls.length;
+  const res = await setup(cf, { action: 'managed_challenge' });
+  assert.equal(res.ok, true, res.output);
+  const writes = cf.calls.slice(before).filter((c) => c.method !== 'GET');
+  assert.deepEqual(writes, [], 'no list or rule is created twice');
+  assert.match(res.output, /already exists/);
+  assert.match(res.output, /already has the Kagami WAF custom rule, with action block\. Nothing was changed/);
+  assert.match(res.output, /To use managed_challenge instead, edit the rule in the dashboard/);
+  assert.equal(cf.waf.entrypoint.rules.length, 1);
+});
+
+test('an existing Kagami rule is recognised by expression or description', () => {
+  assert.ok(isKagamiRule({ action: 'block', expression: 'ip.src in $kagami_contained' }, 'kagami_contained'));
+  assert.ok(isKagamiRule({ action: 'block', expression: '( ( ip.src  in $kagami_contained ) )' }, 'kagami_contained'));
+  assert.ok(isKagamiRule({ action: 'block', expression: 'ip.src in $other', description: 'Kagami edge block' }, 'kagami_contained'));
+  assert.ok(!isKagamiRule(OTHER_RULE, 'kagami_contained'));
+  assert.ok(!isKagamiRule({ action: 'block', expression: 'ip.src in $kagami_contained2' }, 'kagami_contained'));
+});
+
+test('a disabled Kagami rule is reported and left alone', async () => {
+  const cf = fakeCloudflare({ entrypoint: { id: RULESET, rules: [{ id: 'k', action: 'block', expression: '(ip.src in $kagami_contained)', enabled: false }] } });
+  const res = await setup(cf);
+  assert.match(res.output, /is turned off/);
+  assert.equal(cf.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/rules')).length, 0);
+});
+
+test('zones are found by domain, by a host inside them, by URL and by id', async () => {
+  assert.deepEqual(zoneCandidates('https://Shop.Example.com/path'), ['shop.example.com', 'example.com']);
+  assert.deepEqual(zoneCandidates('example.com.'), ['example.com']);
+  for (const zone of ['shop.example.com', 'https://example.com/', ZONE]) {
+    const cf = fakeCloudflare();
+    const res = await setup(cf, { zones: [zone] });
+    assert.equal(res.ok, true, `${zone} ${res.output}`);
+    assert.equal(cf.waf.entrypoint.rules.length, 1);
+  }
+  const cf = fakeCloudflare();
+  const res = await setup(cf, { zones: ['nothing.test'] });
+  assert.equal(res.ok, false);
+  assert.match(res.output, /No zone named nothing\.test was found/);
+  assert.match(res.output, /Add the WAF custom rule by hand/);
+});
+
+test('a token without zone permissions still creates the list and says what is missing', async () => {
+  const cf = fakeCloudflare({ denyZones: true });
+  const res = await setup(cf);
+  assert.equal(res.ok, false);
+  assert.deepEqual(cf.lists.map((l) => l.name), ['kagami_contained']);
+  assert.match(res.output, /needs Zone Read and Zone WAF Edit/);
+  assert.ok(res.output.includes('Expression       (ip.src in $kagami_contained)'));
+  assert.ok(res.output.includes(`KAGAMI_CLOUDFLARE_LIST_ID=${LIST}`));
+});
+
+test('a zone in another account is refused', async () => {
+  const cf = fakeCloudflare({ zones: [{ id: ZONE, name: 'example.com', account: { id: 'f'.repeat(32) } }] });
+  const res = await setup(cf);
+  assert.equal(res.ok, false);
+  assert.match(res.output, /belongs to another Cloudflare account/);
+  assert.equal(cf.waf.entrypoint, undefined);
+});
+
+test('setup without --zone prints the rule to add by hand and only uses the lists permission', async () => {
+  const cf = fakeCloudflare();
+  const res = await setup(cf, { zones: [] });
+  assert.equal(res.ok, true);
+  assert.match(res.output, /Add the WAF custom rule by hand/);
+  assert.match(res.output, /--zone <your domain>/);
+  assert.ok(!cf.calls.some((c) => c.path.includes('/zones')));
+  assert.ok(!/Zone WAF Edit, to add/.test(res.output));
+});
+
+test('the account id is found when the token sees exactly one account', async () => {
+  const cf = fakeCloudflare();
+  const res = await setup(cf, { accountId: '' });
+  assert.match(res.output, /Using the account Main/);
+  assert.ok(res.output.includes(`CLOUDFLARE_ACCOUNT_ID=${ACCOUNT}`));
+  const two = fakeCloudflare({ accounts: [{ id: ACCOUNT, name: 'A' }, { id: 'e'.repeat(32), name: 'B' }] });
+  await assert.rejects(setup(two, { accountId: '' }), /can see 2 accounts/);
+});
+
+test('a token Cloudflare rejects is named as the problem', async () => {
+  const fetch = async () => new Response(JSON.stringify({ success: false, errors: [{ code: 9106, message: 'Authentication failed (status: 400)' }] }), { status: 400 });
+  await assert.rejects(cloudflareSetup({ apiToken: TOKEN, accountId: ACCOUNT, fetch, sleep: fast }), /Cloudflare rejected the token/);
+  await assert.rejects(cloudflareSetup({ apiToken: TOKEN, fetch, sleep: fast }), /Cloudflare rejected the token/);
+});
+
+test('setup rejects a bad action or list name before calling Cloudflare', async () => {
+  const cf = fakeCloudflare();
+  await assert.rejects(setup(cf, { action: 'allow' }), /block or managed_challenge/);
+  await assert.rejects(setup(cf, { listName: 'bad name' }), /letters, digits and underscores/);
+  assert.equal(cf.calls.length, 0);
 });

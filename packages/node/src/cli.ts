@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { verifyChain } from './chain.js';
 import { ListsClient } from './cloudflare/api.js';
 import { cloudflareEnforcer, itemExpiry } from './cloudflare/enforcer.js';
+import { cloudflareSetup, DEFAULT_LIST_NAME, type RuleAction } from './cloudflare/setup.js';
 import { formatChecks, runDoctor } from './doctor.js';
 
 const HELP = `Kagami command line tool. Deception-based defence against AI-driven attacks.
@@ -17,12 +18,17 @@ Commands
       --blocklist <file>     Also check a JSON blocklist written by blocklistFile
       --json                 Print the results as JSON, for scripts and AI agents
   kagami verify-log <file>   Verify the hash chain of a Kagami JSON-lines event log
-  kagami cloudflare setup    Create the Cloudflare IP list and print the WAF rule to add
+  kagami cloudflare setup    Create the Cloudflare IP list and the WAF rule that blocks it
+      --zone <domain or id>  Add the WAF custom rule to this zone. Repeat for several zones.
+                             Without it, the rule to add by hand is printed.
+      --action <action>      block (default) or managed_challenge
+      --name <name>          The list name, kagami_contained by default
   kagami cloudflare status   Show how many machines are in the Cloudflare list
   kagami cloudflare sweep    Remove expired and duplicate Kagami entries from the list now
       Cloudflare commands read CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from the
-      environment, and the list from KAGAMI_CLOUDFLARE_LIST_ID. The token needs the account
-      permission "Account Filter Lists Edit".
+      environment, and the list from KAGAMI_CLOUDFLARE_LIST_ID. The app's token needs only
+      "Account Filter Lists Edit". Setup with --zone also needs "Zone Read" and "Zone WAF Edit".
+      Run setup without a token to see how to create one.
   kagami help                Show this help
 `;
 
@@ -34,7 +40,9 @@ const { values, positionals } = parseArgs({
     events: { type: 'string' },
     blocklist: { type: 'string' },
     json: { type: 'boolean', default: false },
-    name: { type: 'string', default: 'kagami_contained' },
+    name: { type: 'string', default: DEFAULT_LIST_NAME },
+    zone: { type: 'string', multiple: true },
+    action: { type: 'string', default: 'block' },
     help: { type: 'boolean', short: 'h', default: false },
   },
 });
@@ -89,31 +97,14 @@ async function cloudflareCommand(sub: string | undefined): Promise<void> {
   // so it does not end up in shell history or process listings.
   const apiToken = process.env.CLOUDFLARE_API_TOKEN ?? '';
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? '';
-  if (!apiToken) throw new Error('Set CLOUDFLARE_API_TOKEN to an API token with the account permission "Account Filter Lists Edit".');
-  const client = new ListsClient({ apiToken, accountId });
   if (sub === 'setup') {
-    const name = values.name!;
-    if (!/^[a-z0-9_]{1,50}$/i.test(name)) throw new Error('The list name may only hold letters, digits and underscores, up to 50 characters.');
-    const existing = await client.findList(name);
-    const list = existing ?? (await client.createList(name, 'Machines contained by Kagami. Entries expire and are removed automatically.'));
-    process.stdout.write(
-      [
-        existing ? `The IP list "${name}" already exists.` : `Created the IP list "${name}".`,
-        '',
-        'Set this next to CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID where the app runs.',
-        `  KAGAMI_CLOUDFLARE_LIST_ID=${list.id}`,
-        '',
-        'Then add a WAF custom rule in each zone you protect.',
-        '  Dashboard path   Security, then WAF, then Custom rules, then Create rule',
-        `  Expression       (ip.src in $${name})`,
-        '  Action           Block, or Managed Challenge for a softer response',
-        '',
-        'With containment on, Kagami adds contained machines to the list by itself.',
-        '',
-      ].join('\n'),
-    );
+    const res = await cloudflareSetup({ apiToken, accountId, listName: values.name, zones: values.zone, action: values.action as RuleAction });
+    process.stdout.write(res.output);
+    if (!res.ok) process.exitCode = 1;
     return;
   }
+  if (!apiToken) throw new Error('Set CLOUDFLARE_API_TOKEN to an API token with the account permission "Account Filter Lists Edit".');
+  const client = new ListsClient({ apiToken, accountId });
   const listId = process.env.KAGAMI_CLOUDFLARE_LIST_ID ?? '';
   if (!/^[a-f0-9]{32}$/i.test(listId)) throw new Error('Set KAGAMI_CLOUDFLARE_LIST_ID. Run npx @agenticslabs/kagami cloudflare setup to create the list.');
   if (sub === 'status') {
