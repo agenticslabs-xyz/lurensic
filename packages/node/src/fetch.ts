@@ -69,10 +69,14 @@ export function peerAddress(request: Request, platform: unknown): string {
       remoteAddr?: { hostname?: string };
       requestIP?: (r: Request) => { address?: string } | null;
       incoming?: { socket?: { remoteAddress?: string } };
+      event?: { requestContext?: { http?: { sourceIp?: string }; identity?: { sourceIp?: string } } };
     } | null;
     if (p?.remoteAddr?.hostname) return p.remoteAddr.hostname;
     if (typeof p?.requestIP === 'function') return p.requestIP(request)?.address ?? '';
     if (p?.incoming?.socket?.remoteAddress) return p.incoming.socket.remoteAddress;
+    // AWS Lambda through Hono's adapter. API Gateway sets the source address.
+    const rc = p?.event?.requestContext;
+    if (rc?.http?.sourceIp || rc?.identity?.sourceIp) return rc.http?.sourceIp ?? rc.identity?.sourceIp ?? '';
     if (isWorkers() || 'cf' in request) return request.headers.get('cf-connecting-ip') ?? '';
   } catch {
     /* fall through */
@@ -218,6 +222,12 @@ export class FetchGuard {
       k = this.kagami(platform);
       if (!k.isEnabled) return next(request);
       info = await this.describe(request, platform, k.maxBodyBytes);
+      // Without a client address every visitor would look like one machine,
+      // and one tripwire would contain everybody. Kagami steps aside instead.
+      if (!info.ip && !info.peer) {
+        this.noAddress();
+        return next(request);
+      }
       if (k.usesStore) await k.prepare(info);
       verdict = k.inspect(info);
     } catch {
@@ -324,6 +334,22 @@ export class FetchGuard {
     const headers = new Headers(res.headers);
     headers.delete('content-length');
     return new Response(out === text ? read.bytes : out, { status, statusText: res.statusText, headers });
+  }
+
+  private warnedNoAddress = false;
+
+  private noAddress(): void {
+    if (this.warnedNoAddress) return;
+    this.warnedNoAddress = true;
+    try {
+      (this.options.logger ?? console).warn(
+        '[kagami] The client address is unknown on this runtime, so Kagami lets requests through untouched. ' +
+          'Pass clientIp, for example clientIp: (request) => request.headers.get("x-nf-client-connection-ip") on Netlify. ' +
+          'See docs/guides/choose-your-setup.md.',
+      );
+    } catch {
+      /* never throw from logging */
+    }
   }
 
   /** On Cloudflare Workers, events and enforcers finish after the response is sent. */

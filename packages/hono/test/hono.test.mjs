@@ -123,7 +123,10 @@ test('on Workers, settings come from the bindings and background work goes to wa
   const app = buildApp(mw);
   const bindings = { KAGAMI_SECRET: SECRET, KAGAMI_MODE: 'protect' };
   const executionCtx = { waitUntil: (p) => (waited++, p), passThroughOnException() {} };
-  const res = await app.request('/.env', {}, bindings, executionCtx);
+  // On Workers, Cloudflare sets CF-Connecting-IP and the request carries `cf`.
+  const req = new Request('http://localhost/.env', { headers: { 'cf-connecting-ip': '198.51.100.12' } });
+  Object.defineProperty(req, 'cf', { value: {} });
+  const res = await app.request(req, undefined, bindings, executionCtx);
   assert.match(await res.text(), /^NODE_ENV=production$/m);
   assert.equal(waited, 1);
 });

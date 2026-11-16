@@ -199,7 +199,30 @@ test('settings can arrive with the request, as Cloudflare Workers bindings do', 
   const app = kagami(buildApp(), { sinks: [], logger: quiet });
   const bindings = { KAGAMI_SECRET: SECRET, KAGAMI_MODE: 'protect', SOME_KV: {} };
   const ctx = { waitUntil: (p) => (waited++, p) };
-  const res = await app.fetch(new Request('https://shop.example.com/.env'), bindings, ctx);
+  // On Workers, Cloudflare sets CF-Connecting-IP and the request carries `cf`.
+  const req = new Request('https://shop.example.com/.env', { headers: { 'cf-connecting-ip': '198.51.100.12' } });
+  Object.defineProperty(req, 'cf', { value: {} });
+  const res = await app.fetch(req, bindings, ctx);
   assert.match(await res.text(), /^NODE_ENV=production$/m, 'protect mode and the secret came from the bindings');
   assert.equal(waited, 1, 'background work is handed to waitUntil');
+});
+
+test('AWS Lambda through Hono passes the address in the request context', () => {
+  const req = new Request('https://shop.example.com/');
+  assert.equal(peerAddress(req, { event: { requestContext: { http: { sourceIp: '198.51.100.6' } } } }), '198.51.100.6', 'API Gateway HTTP API and function URLs');
+  assert.equal(peerAddress(req, { event: { requestContext: { identity: { sourceIp: '198.51.100.7' } } } }), '198.51.100.7', 'API Gateway REST API');
+});
+
+test('without a client address Kagami steps aside instead of treating everyone as one machine', async () => {
+  const warnings = [];
+  const app = kagami(buildApp(), { secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: { warn: (m) => warnings.push(m) } });
+  const field = app.kagami.manifest().decoys.json_field;
+  const bare = (path) => app.fetch(new Request(`https://shop.example.com${path}`));
+  await bare(`/api/products?${field}=admin`);
+  assert.equal((await bare('/')).status, 200, 'nobody is contained');
+  assert.equal(app.kagami.contained().length, 0);
+  assert.equal(warnings.filter((w) => w.includes('client address is unknown')).length, 1, 'warned once');
+  const withIp = kagami(buildApp(), { secret: SECRET, mode: 'protect', clientIp: (r) => r.headers.get('x-nf-client-connection-ip'), sinks: [], logger: quiet });
+  const res = await withIp.fetch(new Request('https://shop.example.com/.env', { headers: { 'x-nf-client-connection-ip': '198.51.100.8' } }));
+  assert.match(await res.text(), /^NODE_ENV=production$/m, 'clientIp makes Kagami work');
 });
