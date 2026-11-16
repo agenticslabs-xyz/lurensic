@@ -54,19 +54,17 @@ flowchart TB
         RT["Runtime, @agenticslabs/kagami<br/>fail-open wrapper, kill switch, secret,<br/>JSON envelope to and from the WASM ABI"]
         CORE["kagami-core (WASM)<br/>rules, decoys, honeytokens, sessions,<br/>containment, shadow, client address, audit log<br/>no imports, so no clock, no I/O, no randomness"]
         SINKS["Event sinks<br/>stdout, file, webhook, Slack"]
-        ENF["Enforcers<br/>blocklist file, webhook, callback"]
+        ENF["Enforcers<br/>Cloudflare, blocklist file, webhook, callback"]
         AD --> RT --> CORE
         RT --> SINKS
         RT --> ENF
     end
-    ENF --> FILE[("JSON blocklist")]
-    FILE --> KE["kagami-enforcer<br/>separate process, one for every language"]
-    KE --> EDGE["Edge provider<br/>Cloudflare IP list and WAF rule"]
+    ENF --> EDGE["Edge provider<br/>Cloudflare IP list and WAF rule"]
+    ENF --> FW["Your firewall or WAF<br/>through a blocklist file or webhook"]
 ```
 
-Decisions are made only in the core. The runtime moves data and does all I/O off the request path. Edge providers
-are handled by `kagami-enforcer`, a separate Rust program that reads the JSON blocklist any adapter writes, so a
-provider is implemented once for every language.
+Decisions are made only in the core. The runtime moves data and does all I/O off the request path, including the
+calls to edge providers. Users install one package per framework and run nothing else.
 
 ### 4.1 Core ABI (v1)
 
@@ -254,8 +252,8 @@ query string.
 They run off the request path in batches. Containments that arrive while an enforcer call is running are merged into
 the next call, and a failing enforcer is counted in `stats().enforcerErrors` and never affects requests. By default
 an enforcer receives only public addresses, so loopback tests, private networks and documentation ranges never reach
-an edge firewall. The Node package includes `blocklistFile`, `webhookEnforcer` and `callbackEnforcer`. Cloudflare
-support (an IP list referenced by a WAF custom rule) is a separate package, so the engine depends on no provider.
+an edge firewall. The Node package includes `blocklistFile`, `webhookEnforcer` and `callbackEnforcer`, and a
+Cloudflare enforcer (an IP list referenced by a WAF custom rule) that switches on from environment variables.
 
 ## 7. Security model
 
@@ -331,11 +329,12 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `tarpit` | `false` | `true` or `{ minMs, maxMs }` |
 | `thresholds` | `{ suspicious: 30, flagged: 70 }` | |
 | `ignorePaths` | `[]` | Paths skipped entirely, such as health checks and static assets |
+| `cloudflare` | from the environment | Added when `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID` are set and containment is on. `{ apiToken, accountId, listId }` passes them in code, `false` turns it off. |
 | `clientAddress` | none | `{ trustedProxies, cloudflare, cloudflareRanges }`. The core resolves the client address from the peer and trusted headers. See [Behind a proxy or CDN](guides/behind-a-proxy.md). |
 | `ipLogging` | `raw` | `raw`, `hashed` (keyed per deployment) or `omit` |
 | `sinks` | `[consoleSink()]` | |
-| `containment` | off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
-| `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile` or `webhookEnforcer`. Edge providers such as Cloudflare are served by `kagami-enforcer`, which reads the JSON blocklist |
+| `containment` | `KAGAMI_CONTAINMENT` or off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
+| `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile` or `webhookEnforcer`. The Cloudflare enforcer is added by itself when its settings are present |
 | `maxBodyBytes` | 16384 | |
 | `maxEventsPerMinute` | 600 | |
 | `maxSessions` | 50000 | |

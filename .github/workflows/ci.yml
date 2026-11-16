@@ -24,8 +24,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
       # The engine, the WebAssembly build and every JavaScript suite.
       - run: pnpm test
-      # The standalone enforcer is not a default workspace member, so it is tested here.
-      - run: cargo test -p kagami-enforcer

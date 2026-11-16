@@ -86,7 +86,7 @@ Enforcers receive each newly contained machine, off the request path, and push i
 
 | Enforcer | Writes to | Use it with |
 |---|---|---|
-| `blocklistFile({ path, format })` | A file, replaced atomically, kept across restarts | `format: 'nginx'` for an nginx `include` of `deny` lines. `format: 'plain'` for ipset, iptables scripts or AWS WAF imports. `format: 'json'` for `kagami-enforcer`. |
+| `blocklistFile({ path, format })` | A file, replaced atomically, kept across restarts | `format: 'nginx'` for an nginx `include` of `deny` lines. `format: 'plain'` for ipset, iptables scripts or AWS WAF imports. `format: 'json'` for your own tooling. |
 | `webhookEnforcer({ url, secret })` | Your HTTPS endpoint, signed with HMAC | A SOAR, a serverless function that updates a cloud WAF, a firewall API |
 | `callbackEnforcer(fn)` | Your own function | Anything in process |
 
@@ -116,7 +116,8 @@ The `kagami-signature` header is `t=<unix seconds>,v1=<hex HMAC-SHA256 of t + ".
 Enforcers only receive public addresses unless you pass `includePrivate: true`. A failing enforcer never affects
 requests. Its failures are counted in `kagami.stats().enforcerErrors`.
 
-For Cloudflare, write the JSON blocklist and run `kagami-enforcer`. See [Cloudflare](cloudflare.md).
+Cloudflare is built in. Set three environment variables and Kagami adds contained machines to a Cloudflare IP list by
+itself. See [Cloudflare](cloudflare.md).
 
 ## Managing contained machines
 

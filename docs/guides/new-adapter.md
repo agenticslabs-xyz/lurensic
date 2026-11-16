@@ -18,6 +18,8 @@ Two layers are needed per language.
    wasmtime.
 2. **An adapter**, once per framework. It maps the framework's request and response to the runtime's calls.
 
+Users install the adapter, which brings the runtime and the engine with it.
+
 ## The contract
 
 For every request the adapter does the following.
@@ -39,8 +41,8 @@ For every request the adapter does the following.
 Also provide `seal` and `verify` to the application, a kill switch (`KAGAMI_DISABLED`), and a way to read the
 contained list and release a machine.
 
-Every adapter should be able to write the JSON blocklist that `kagami-enforcer` reads. Its format is pinned by
-[`crates/kagami-enforcer/tests/fixtures/contained.json`](../../crates/kagami-enforcer/tests/fixtures/contained.json).
+The runtime should offer the same enforcers as the Node runtime, including Cloudflare switched on from the same
+environment variables, so a user installs one package and runs nothing else.
 
 ## Requests rejected by the framework
 

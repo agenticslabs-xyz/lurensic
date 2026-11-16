@@ -28,7 +28,7 @@ export interface DoctorOptions {
   url?: string;
   /** Path of the Kagami event log written by `fileSink`, to confirm events arrive. */
   events?: string;
-  /** Path of a JSON blocklist written by `blocklistFile`, to check enforcement output. */
+  /** Path of a JSON blocklist written by `blocklistFile({ format: 'json' })`, to check enforcement output. */
   blocklist?: string;
   /** Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
@@ -177,13 +177,13 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
     } else {
       try {
         const parsed = JSON.parse(readFileSync(o.blocklist, 'utf8')) as { entries?: unknown[] };
-        add({ id: 'blocklist', status: 'pass', message: `${o.blocklist} is a valid JSON blocklist with ${parsed.entries?.length ?? 0} entries, ready for kagami-enforcer.` });
+        add({ id: 'blocklist', status: 'pass', message: `${o.blocklist} is a valid JSON blocklist with ${parsed.entries?.length ?? 0} entries.` });
       } catch {
         add({
           id: 'blocklist',
           status: 'warn',
-          message: `${o.blocklist} is not a JSON blocklist. kagami-enforcer reads the JSON format.`,
-          fix: "Use blocklistFile({ path, format: 'json' }) for the file kagami-enforcer reads.",
+          message: `${o.blocklist} is not a JSON blocklist, so the doctor cannot check it.`,
+          fix: "Pass the path of a blocklistFile({ path, format: 'json' }) file, or leave --blocklist out.",
         });
       }
     }

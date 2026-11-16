@@ -25,7 +25,7 @@ mode, which is expected.
 | `protect` | FAIL | Your app serves a real `/.env`. That is a leak. Stop serving dotfiles, rotate every secret in the file, then mount Kagami before your routes. |
 | `events` | PASS | The event log holds a `system.started` event, with the mode and features the engine started with. |
 | `client_address` | WARN | Kagami saw your requests as coming from a private address. You are behind a proxy that Kagami does not know about. See [Behind a proxy or CDN](behind-a-proxy.md). |
-| `blocklist` | WARN | The file is not JSON. `kagami-enforcer` reads `blocklistFile({ format: 'json' })`. |
+| `blocklist` | WARN | The file is not a JSON blocklist. The doctor only checks `blocklistFile({ format: 'json' })` files. |
 
 ## Common problems
 
@@ -43,9 +43,9 @@ mode, which is expected.
 **A client breaks after turning on `decoys.json` or `decoys.forms`.** The client rejects unknown JSON fields, or a form
 handler rejects unknown form fields. Turn that decoy off, or list the field's route in `ignorePaths`.
 
-**The Cloudflare list does not change.** Run `kagami-enforcer cloudflare status`, check that the enforcer reads the
-same file the app writes, and that the file is in JSON format. Private and loopback addresses are never added, so a
-local test produces no Cloudflare entries.
+**The Cloudflare list does not change.** Look for a `[kagami] Cloudflare` warning when the app starts. It names any
+missing setting. Check that containment is on and the mode is protect, and run `npx @agenticslabs/kagami cloudflare
+status`. Private and loopback addresses are never added, so a local test produces no Cloudflare entries.
 
 **Kagami seems to do nothing in protect mode.** Run the doctor. If `protect` is INFO, check the order of your
 middleware and that `KAGAMI_MODE` or `mode` is `protect`.

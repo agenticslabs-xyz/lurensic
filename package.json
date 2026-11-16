@@ -25,8 +25,7 @@
     "test": "pnpm test:core && pnpm build && pnpm test:js",
     "demo": "pnpm build && pnpm --filter demo-shop start",
     "bench": "pnpm build && node scripts/bench-serve.mjs",
-    "bench:report": "node scripts/bench-report.mjs",
-    "test:enforcer": "cargo test -p kagami-enforcer"
+    "bench:report": "node scripts/bench-report.mjs"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

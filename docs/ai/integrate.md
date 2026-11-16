@@ -120,9 +120,14 @@ If the app hands record IDs to clients, offer to seal them with `req.kagami.seal
 
 ## Step 7. Edge blocking, optional
 
-If the app is behind Cloudflare and the owner wants attackers blocked at the edge, follow the
-[Cloudflare guide](../guides/cloudflare.md). It needs a Cloudflare API token that only the owner can create. Never
-ask for broader permissions than **Account Filter Lists Edit**.
+If the app is behind Cloudflare and the owner wants attackers blocked at the edge, nothing extra is installed. The
+owner creates a Cloudflare API token with only the account permission **Account Filter Lists Edit**, then runs
+`npx @agenticslabs/kagami cloudflare setup` and adds the WAF rule it prints. The app then needs three environment
+variables, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and `KAGAMI_CLOUDFLARE_LIST_ID`, plus
+`clientAddress: { cloudflare: true }` from step 4. Kagami adds the Cloudflare enforcer by itself when they are set.
+
+Never ask for broader token permissions, never put the token in source files, and follow the
+[Cloudflare guide](../guides/cloudflare.md) for the details.
 
 ## Reading doctor output
 

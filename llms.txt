@@ -20,7 +20,7 @@ with `npx @agenticslabs/kagami doctor --json`.
 
 - [How Kagami works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception, containment
 - [Containment and enforcement](docs/guides/containment.md): cutting attackers off, blocklists and webhooks
-- [Cloudflare](docs/guides/cloudflare.md): blocking contained machines at Cloudflare's edge with kagami-enforcer
+- [Cloudflare](docs/guides/cloudflare.md): blocking contained machines at Cloudflare's edge, built in
 
 ## Reference
 
@@ -29,7 +29,6 @@ with `npx @agenticslabs/kagami doctor --json`.
 - [Writing an adapter](docs/guides/new-adapter.md): the contract for new languages and frameworks
 - [Express package](packages/express/README.md)
 - [Node package](packages/node/README.md)
-- [kagami-enforcer](crates/kagami-enforcer/README.md)
 
 ## Optional
 

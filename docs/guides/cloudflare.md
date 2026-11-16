@@ -1,39 +1,64 @@
 # Cloudflare
 
-Kagami contains attackers inside your app. With Cloudflare in front of the app, you can also stop them at
-Cloudflare's edge, before they reach your server.
+Kagami contains attackers inside your app. With Cloudflare in front of the app, Kagami can also stop them at
+Cloudflare's edge, before they reach your server. It is built into the Kagami package. There is nothing else to
+install or run.
 
 ```mermaid
 flowchart LR
-    APP["Your app with Kagami<br/>any language"] -->|"writes"| FILE[("contained.json")]
-    FILE -->|"read every 30 s"| KE["kagami-enforcer"]
-    KE -->|"Lists API"| LIST["Cloudflare IP list<br/>kagami_contained"]
+    ATT["Attacker"] -->|"touches a tripwire"| APP["Your app with Kagami"]
+    APP -->|"adds the machine,<br/>Lists API"| LIST["Cloudflare IP list<br/>kagami_contained"]
     LIST --> RULE["WAF custom rule<br/>ip.src in $kagami_contained"]
-    RULE -->|"Block or challenge"| ATT["Contained machine"]
+    RULE -->|"blocks or challenges<br/>every later request"| ATT
 ```
 
-This works on every Cloudflare plan, including Free. It uses two standard Cloudflare features, a custom IP list and
-a WAF custom rule. `kagami-enforcer` keeps the list matching the machines Kagami has contained.
+This works on every Cloudflare plan, including Free. It uses two standard Cloudflare features, a custom IP list and a
+WAF custom rule.
 
 ## What you need
 
-| Value | Where it comes from |
+| Environment variable | Where it comes from |
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard, My Profile, API Tokens, Create Token. Give it one account permission, **Account Filter Lists Edit**. It cannot change DNS, zones or anything else. |
 | `CLOUDFLARE_ACCOUNT_ID` | The account ID shown on your Cloudflare dashboard |
-| `KAGAMI_CLOUDFLARE_LIST_ID` | Printed by `kagami-enforcer cloudflare setup` |
+| `KAGAMI_CLOUDFLARE_LIST_ID` | Printed by `npx @agenticslabs/kagami cloudflare setup` |
 
-The token is read from the environment only, never from the command line, so it does not end up in shell history.
+When all three are set and containment is on, Kagami sends contained machines to Cloudflare by itself.
 
-## 1. Tell Kagami the real client address
+## 1. Create the list
 
-Behind Cloudflare, every connection comes from Cloudflare. Without this step, Kagami would see Cloudflare's address
-for every visitor.
+```bash
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_ACCOUNT_ID=...
+npx @agenticslabs/kagami cloudflare setup
+```
+
+The command creates the IP list `kagami_contained` (or finds it) and prints `KAGAMI_CLOUDFLARE_LIST_ID`. The token is
+read from the environment only, never from the command line, so it does not end up in shell history.
+
+## 2. Add the WAF rule
+
+In each zone you protect, go to Security, WAF, Custom rules, Create rule.
+
+| Field | Value |
+|---|---|
+| Expression | `(ip.src in $kagami_contained)` |
+| Action | Block, or Managed Challenge for a softer response |
+
+## 3. Configure the app
+
+Set the three variables where the app runs, plus these.
+
+```bash
+KAGAMI_MODE=protect
+KAGAMI_CONTAINMENT=on
+```
+
+Tell Kagami the app is behind Cloudflare, so it uses the visitor's address instead of Cloudflare's.
 
 ```js
 app.use(kagami({
   clientAddress: { cloudflare: true },
-  // ...
 }));
 ```
 
@@ -41,84 +66,51 @@ Kagami then trusts `CF-Connecting-IP` only on connections from Cloudflare's publ
 forge it to get someone else blocked. If your own proxy sits between Cloudflare and the app, see
 [Behind a proxy or CDN](behind-a-proxy.md).
 
-## 2. Write the JSON blocklist
+You can pass everything in code instead of the environment.
 
 ```js
 app.use(kagami({
   mode: 'protect',
   containment: true,
   clientAddress: { cloudflare: true },
-  enforcers: [blocklistFile({ path: '/var/lib/myapp/contained.json', format: 'json' })],
+  cloudflare: {
+    apiToken: process.env.CLOUDFLARE_API_TOKEN,
+    accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+    listId: process.env.KAGAMI_CLOUDFLARE_LIST_ID,
+  },
 }));
 ```
 
-Any Kagami adapter in any language can write this file.
+`cloudflare: false` keeps Cloudflare off even when the variables are set.
 
-## 3. Install kagami-enforcer
-
-Use whichever suits your servers.
+## 4. Check it
 
 ```bash
-# A release binary (kagami-enforcer-linux-x86_64 and others), checked against its .sha256 file
-sha256sum -c kagami-enforcer-linux-x86_64.sha256
-
-# The container image, built from the repository
-docker build -f crates/kagami-enforcer/Dockerfile -t kagami-enforcer .
-
-# From source, with Rust installed
-cargo build --release -p kagami-enforcer
+npx @agenticslabs/kagami doctor --url https://your-site.example
+npx @agenticslabs/kagami cloudflare status
 ```
 
-## 4. Create the list and the WAF rule
+If a setting is missing, Kagami says which one when the app starts, and sends nothing to Cloudflare.
 
-```bash
-export CLOUDFLARE_API_TOKEN=...
-export CLOUDFLARE_ACCOUNT_ID=...
-kagami-enforcer cloudflare setup
-```
+## How it behaves
 
-The command creates the IP list `kagami_contained` (or finds it) and prints its ID. Then add a WAF custom rule in each
-zone you protect, under Security, WAF, Custom rules.
-
-| Field | Value |
-|---|---|
-| Expression | `(ip.src in $kagami_contained)` |
-| Action | Block, or Managed Challenge for a softer response |
-
-## 5. Run the sync
-
-```bash
-export KAGAMI_CLOUDFLARE_LIST_ID=...
-kagami-enforcer cloudflare sync --from /var/lib/myapp/contained.json --watch 30
-```
-
-Run it as a service next to the app, for example with systemd or as a sidecar container.
-
-```bash
-docker run -d --restart unless-stopped \
-  -e CLOUDFLARE_API_TOKEN -e CLOUDFLARE_ACCOUNT_ID -e KAGAMI_CLOUDFLARE_LIST_ID \
-  -v /var/lib/myapp:/data:ro \
-  kagami-enforcer cloudflare sync --from /data/contained.json --watch 30
-```
-
-Check it any time.
-
-```bash
-kagami-enforcer cloudflare status
-```
-
-## How the sync behaves
-
-- **It only adds public addresses.** Private, loopback and documentation addresses in the file are skipped. IPv6
-  attackers are added as their /64.
+- **It never slows a request.** Machines are sent to Cloudflare in the background, in batches. A Cloudflare outage
+  never affects your app. Failures are counted in `kagami.stats().enforcerErrors`.
+- **It only adds public addresses.** Private, loopback and documentation addresses are never sent. IPv6 attackers are
+  added as their /64.
 - **It removes entries when they expire.** Each item carries a comment such as
-  `kagami until=2026-11-17T09:30:00.000Z reason=decoy.param by=default`.
+  `kagami until=2026-11-17T09:30:00.000Z reason=decoy.param`. Every ten minutes, expired and duplicate Kagami items are
+  removed. `kagami.release(ip)` removes an address at once.
 - **It never touches entries it did not add.** Items without the `kagami ` prefix are left alone, so you can share the
   list with entries you manage yourself.
-- **Several servers can share one list.** Give each enforcer its own `--id`. An enforcer removes an entry early (after
-  `kagami.release`) only if it added that entry itself.
+- **It works across restarts and servers.** The list in Cloudflare is the shared record, so several app instances can
+  use one list.
 - **It is careful with the API.** Cloudflare applies list changes asynchronously and allows one pending change per
-  account. The enforcer waits for each change to finish, sends changes in batches, and retries rate limits.
+  account. Kagami waits for each change to finish before the next and retries rate limits.
+
+```bash
+npx @agenticslabs/kagami cloudflare sweep     # remove expired entries now
+```
 
 ## Limits
 

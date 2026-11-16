@@ -213,12 +213,19 @@ export interface KagamiOptions {
   sinks?: Sink[];
   /**
    * Cut machines that trip a tripwire off from the application. Off by
-   * default. `true` uses the defaults. Enforced in protect mode only. In
+   * default. `true` uses the defaults. Also read from KAGAMI_CONTAINMENT (on, shadow or block). Enforced in protect mode only. In
    * observe mode it is a dry run that reports `containment.started` events.
    */
   containment?: boolean | ContainmentOptions;
   /** Where contained machines are enforced besides Kagami itself, such as a blocklist file, a webhook or a CDN. */
   enforcers?: Enforcer[];
+  /**
+   * Block contained machines at Cloudflare's edge. Kagami turns this on by
+   * itself when CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and
+   * KAGAMI_CLOUDFLARE_LIST_ID are set and containment is on. Pass the values
+   * here instead of the environment, or `false` to never use Cloudflare.
+   */
+  cloudflare?: boolean | { apiToken?: string; accountId?: string; listId?: string; sweepMs?: number };
   /** Max request body bytes inspected. Default 16 KiB. */
   maxBodyBytes?: number;
   maxEventsPerMinute?: number;

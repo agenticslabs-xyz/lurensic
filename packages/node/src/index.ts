@@ -11,6 +11,8 @@ export {
   webhookSink,
 } from './sinks.js';
 export { verifyChain, type ChainResult } from './chain.js';
+export { CloudflareApiError, ListsClient, type CloudflareList, type ListItem } from './cloudflare/api.js';
+export { cloudflareEnforcer, cloudflareEnv, COMMENT_PREFIX, itemComment, itemExpiry, type CloudflareEnforcerOptions } from './cloudflare/enforcer.js';
 export { formatChecks, runDoctor, type Check, type CheckStatus, type DoctorOptions } from './doctor.js';
 export { blocklistFile, callbackEnforcer, formatBlocklist, webhookEnforcer, type BlocklistFormat } from './enforce.js';
 export { SEVERITY_RANK } from './types.js';

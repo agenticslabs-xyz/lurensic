@@ -18,14 +18,6 @@ rustup target add wasm32-unknown-unknown
 pnpm install
 pnpm test              # Rust tests, WASM build, all JS suites
 cargo clippy --all-targets -- -D warnings
-pnpm test:enforcer     # the standalone enforcer
-```
-
-The enforcer's TLS library needs a C compiler. On Linux and macOS that is usually present. On Windows, use the MSVC
-Rust toolchain, or run the enforcer's tests in a container.
-
-```bash
-docker run --rm -v "$PWD:/work" -w /work -e CARGO_TARGET_DIR=/work/target/linux rust:1-bookworm   sh -c "cargo test -p kagami-enforcer && cargo clippy -p kagami-enforcer --all-targets -- -D warnings"
 ```
 
 ## Adding a detection rule
@@ -39,11 +31,13 @@ docker run --rm -v "$PWD:/work" -w /work -e CARGO_TARGET_DIR=/work/target/linux 
 Follow [Writing an adapter](docs/guides/new-adapter.md). It describes the contract with the engine, the requests a
 framework rejects, the JSON blocklist every adapter writes, and the test suites every adapter must pass.
 
-## Adding an enforcer provider
+## Adding an enforcer
 
-Add a module to `crates/kagami-enforcer` next to `cloudflare.rs`. A provider reads the same parsed blocklist and
-must only change entries it created, never push private addresses, keep its credentials out of logs and errors, and
-come with tests against an in-memory model of the provider's API.
+Enforcers live in `packages/node/src`, next to `cloudflare/`. An enforcer receives contained machines through the
+`Enforcer` interface, runs off the request path, must only change entries it created, must never push private
+addresses unless asked, keeps its credentials out of logs and errors, and comes with tests against an in-memory model
+of the provider's API. Built-in enforcers that need credentials switch on from environment variables, as Cloudflare
+does.
 
 ## Commits
 

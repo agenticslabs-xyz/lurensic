@@ -129,9 +129,11 @@ app.use(kagami({
 Try it in observe mode first. With `mode: 'observe'` and `containment: true`, Kagami only reports
 `containment.started` events, so you can see who would have been contained.
 
-The blocklist file is what your firewall, your CDN or `kagami-enforcer` reads. See
-[Containment and enforcement](containment.md) for the options, and [Cloudflare](cloudflare.md) to block contained
-machines at Cloudflare's edge.
+The blocklist file is optional. It is for a firewall or a WAF that reads a list, such as nginx. If the app is behind
+Cloudflare, set three environment variables instead and Kagami blocks contained machines at Cloudflare's edge by
+itself. See [Containment and enforcement](containment.md) and [Cloudflare](cloudflare.md).
+
+Containment can also be switched on without code changes, with `KAGAMI_MODE=protect` and `KAGAMI_CONTAINMENT=on`.
 
 ## Switching off
 
