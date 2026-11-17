@@ -369,3 +369,72 @@ test('with a store, a machine contained by one instance is blocked by another', 
     await second.close();
   }
 });
+
+test('onDetect receives each detection with the subject, next to the other sinks', async () => {
+  const seen = [];
+  const sink = memorySink();
+  const app = express();
+  app.use(express.json());
+  // A stand-in for the app's own auth middleware.
+  app.use((req, _res, next) => {
+    const id = req.get('x-account');
+    if (id) req.user = { id };
+    next();
+  });
+  const mw = kagami({
+    secret: SECRET,
+    mode: 'protect',
+    sinks: [sink],
+    logger: quiet,
+    subject: (req) => req.user?.id,
+    onDetect: (event) => {
+      seen.push(event);
+    },
+  });
+  app.use(mw);
+  app.get('/', (_req, res) => res.type('html').send(HTML));
+  const srv = await listen(app);
+  try {
+    assert.equal((await fetchRaw(srv.base, '/')).status, 200);
+    await fetchRaw(srv.base, '/.env', { headers: { 'x-account': 'acct_9', 'user-agent': 'python-requests/2.32' } });
+    await fetchRaw(srv.base, '/.git/config');
+    await mw.kagami.flush();
+  } finally {
+    await srv.close();
+  }
+  assert.ok(seen.length > 0, 'detections reach onDetect');
+  assert.ok(seen.every((e) => e.kind !== 'system'));
+  assert.ok(seen.every((e) => ['info', 'low', 'medium', 'high', 'critical'].indexOf(e.severity) >= 1));
+  const bait = seen.filter((e) => e.request?.path === '/.env');
+  assert.ok(bait.length > 0);
+  assert.ok(bait.every((e) => e.subject === 'acct_9'));
+  assert.ok(seen.filter((e) => e.request?.path === '/.git/config').every((e) => e.subject === undefined));
+  assert.ok(sink.events.length >= seen.length, 'the other sinks still receive every event');
+});
+
+test('a failing onDetect or subject function never affects requests', async () => {
+  const warnings = [];
+  const mw = kagami({
+    secret: SECRET,
+    mode: 'protect',
+    sinks: [],
+    logger: { warn: (m) => warnings.push(m) },
+    subject: () => {
+      throw new Error('auth exploded');
+    },
+    onDetect: () => {
+      throw new Error('handler exploded');
+    },
+  });
+  const srv = await listen(buildApp(mw));
+  try {
+    assert.equal((await fetchRaw(srv.base, '/')).status, 200);
+    const bait = await fetchRaw(srv.base, '/.env', { headers: { 'user-agent': 'python-requests/2.32' } });
+    assert.equal(bait.status, 200);
+    await mw.kagami.flush();
+  } finally {
+    await srv.close();
+  }
+  assert.ok(mw.kagami.stats().sinkErrors >= 1);
+  assert.ok(warnings.some((m) => m.includes('onDetect')));
+});

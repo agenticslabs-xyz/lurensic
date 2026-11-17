@@ -40,17 +40,33 @@ const readLines = (file) =>
 const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
 const eventLines = readLines(join(runDir, 'kagami-events.jsonl'));
 const events = eventLines.map((l) => JSON.parse(l));
-const access = readLines(join(runDir, 'access.jsonl')).map((l) => JSON.parse(l));
+// The warm-up visitor's requests are the operator's own and are left out.
+const isWarmup = (a) => (a.header_order ?? []).some((h) => String(h).toLowerCase() === 'x-bench-warmup');
+const allAccess = readLines(join(runDir, 'access.jsonl')).map((l) => JSON.parse(l));
+const access = allAccess.filter((a) => !isWarmup(a));
+const warmupRequests = allAccess.length - access.length;
+// Each engine announces itself once. More than one start means the engine was
+// rebuilt after an internal error, and its in-memory state was lost.
+const engineRestarts = Math.max(0, events.filter((e) => e.rule === 'system.started').length - 1);
 const chain = await verifyChain(eventLines);
 
 // ---------- analysis ----------
 
 const SEVERITY_RANK = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
-const TRIPWIRES = new Set(['honeytoken.used', 'decoy.param', 'tamper.sealed_value']);
+const TRIPWIRES = new Set(['honeytoken.used', 'decoy.param', 'decoy.route', 'tamper.sealed_value', 'tamper.unsigned_jwt', 'tamper.decoy_secret']);
 
 const ms = (iso) => Date.parse(iso);
-const start = ms(run.started_at);
-const finish = run.finished_at ? ms(run.finished_at) : Math.max(start, ...access.map((a) => ms(a.ts)));
+// Times count from the attacker's first request, because the operator may
+// start the attack long after the service. Health checks are left out, since
+// they are the operator's own.
+const serviceStart = ms(run.started_at);
+const attackTimes = access.filter((a) => a.path !== '/healthz').map((a) => ms(a.ts) - (a.ms ?? 0));
+const start = attackTimes.length ? attackTimes.reduce((x, y) => Math.min(x, y)) : serviceStart;
+const finish = access.length
+  ? access.reduce((x, a) => Math.max(x, ms(a.ts)), start)
+  : run.finished_at
+    ? ms(run.finished_at)
+    : start;
 
 function duration(msValue) {
   if (!Number.isFinite(msValue) || msValue < 0) return 'n/a';
@@ -69,7 +85,8 @@ const session = (id) => {
   return sessions.get(id);
 };
 for (const a of access) {
-  if (!a.kagami?.session) continue;
+  // Health checks are the operator's own and are skipped by Kagami.
+  if (!a.kagami?.session || a.path === '/healthz') continue;
   const s = session(a.kagami.session);
   s.requests.push(a);
   s.source ||= a.kagami.source ?? '';
@@ -183,6 +200,8 @@ const BAIT_FILE = /^\/(\.env(\..*)?|\.git\/config|\.aws\/credentials)$/;
 const DECOY_KINDS = {
   honeytoken: 'Planted credential used',
   decoy_route: 'Decoy routes',
+  decoy_spec: 'Decoy API description',
+  forged_session: 'Session or token signed with the decoy secret',
   bait_file: 'Fake secret files',
   decoy_field: 'Decoy field sent with a changed value',
   decoy_param: 'Decoy debug parameter',
@@ -203,7 +222,9 @@ function decoyKind(a) {
   const p = normPath(a.path);
   const rules = a.kagami?.rules;
   if (rules?.includes('honeytoken.used')) return 'honeytoken';
+  if (rules?.includes('tamper.decoy_secret')) return 'forged_session';
   if (rules?.includes('decoy.route') || decoys?.routes?.includes(p)) return 'decoy_route';
+  if (rules?.includes('decoy.spec')) return 'decoy_spec';
   if (run.mode === 'protect' && a.status === 200 && BAIT_FILE.test(p)) return 'bait_file';
   // Rounds from 2026-11-16 on log the rules each request matched, which
   // covers decoy fields sent in a request body. Older rounds fall back to
@@ -243,6 +264,9 @@ const TOUCHPOINTS = [
   ['decoy.param', 'Sent a decoy field or parameter'],
   ['tamper.sealed_value', 'Tampered with a sealed value'],
   ['decoy.route', 'Requested a decoy route'],
+  ['decoy.spec', 'Fetched the decoy API description'],
+  ['tamper.unsigned_jwt', 'Sent an unsigned JWT'],
+  ['tamper.decoy_secret', 'Signed a cookie or token with the decoy secret'],
   ['bait.path', 'Probed a sensitive file path'],
 ];
 const touchpoints = TOUCHPOINTS.map(([rule, label]) => {
@@ -265,10 +289,12 @@ for (const e of containmentEvents) {
   if (src && !firstContained.has(src)) firstContained.set(src, ms(e.ts));
 }
 // Requests from a machine that reached the app after it was contained.
-// Ignored paths such as health checks are never contained, so they are left out.
+// The demo shop's health check is in Kagami's ignorePaths, which match by
+// prefix, so it and everything under it is never contained by design.
+const healthCheck = (a) => normPath(a.path) === '/healthz' || normPath(a.path).startsWith('/healthz/');
 const leaked = access.filter((a) => {
   const t = firstContained.get(a.kagami?.source);
-  return t !== undefined && arrived(a) > t + 1 && !a.kagami?.contained && a.kagami?.session;
+  return t !== undefined && arrived(a) > t + 1 && !a.kagami?.contained && a.kagami?.session && !healthCheck(a);
 }).length;
 const containment = {
   setting: run.containment ?? (containmentEvents.length ? 'on' : 'off'),
@@ -286,6 +312,21 @@ const planted = run.planted_bugs
       const hits = plantedHits.filter((a) => a.planted === bug).sort((a, b) => arrived(a) - arrived(b));
       return { bug, label, requests: hits.length, first_ms: hits.length ? arrived(hits[0]) - start : null };
     })
+  : null;
+
+// The app's own response through onDetect (rounds run with --respond). The
+// access log marks every request the app refused because it had blocked the
+// sender, with the rule that caused the block.
+const blockedRequests = access.filter((a) => a.blocked).sort((a, b) => arrived(a) - arrived(b));
+const firstBlock = blockedRequests[0];
+const response = run.respond_on_detect
+  ? {
+      blocked_requests: blockedRequests.length,
+      first_block_ms: firstBlock ? arrived(firstBlock) - start : null,
+      first_block_rule: firstBlock?.blocked ?? null,
+      reached_app_after_block: firstBlock ? access.filter((a) => !a.blocked && arrived(a) > arrived(firstBlock) && a.path !== '/healthz').length : 0,
+      planted_after_block: firstBlock ? plantedHits.filter((a) => arrived(a) > arrived(firstBlock)).length : 0,
+    }
   : null;
 
 const harnessFile = join(runDir, 'harness.json');
@@ -331,6 +372,8 @@ const summary = {
   decoy_engagement: decoys ? { ...engagement, share: access.length ? engagement.requests / access.length : 0 } : null,
   touchpoints: touchpoints.map(({ label, ...t }) => t),
   containment,
+  response,
+  engine_restarts: engineRestarts,
   planted_bugs: planted && { reached: planted.filter((p) => p.requests > 0).length, of: planted.length, detail: planted.map(({ label, ...p }) => p) },
   attacker,
   fastest_tripwire_ms: Math.min(...detected.filter((r) => r.firstTripwire).map((r) => r.firstTripwire.after)),
@@ -345,7 +388,7 @@ const md = [];
 const label = run.label ?? basename(runDir);
 md.push(`# Benchmark round ${label}`, '');
 md.push(
-  `${run.mode === 'off' ? `Kagami ${run.kagami_version} was switched off for this baseline round.` : `Kagami ${run.kagami_version} ran in ${run.mode} mode${run.containment && run.containment !== 'off' ? ` with ${run.containment} containment` : ''}.`}${run.planted_bugs ? ' The target carried two planted real bugs.' : ''} The round started at ${run.started_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} and lasted ${duration(finish - start)}.`,
+  `${run.mode === 'off' ? `Kagami ${run.kagami_version} was switched off for this baseline round.` : `Kagami ${run.kagami_version} ran in ${run.mode} mode${run.containment && run.containment !== 'off' ? ` with ${run.containment} containment` : ''}.`}${run.planted_bugs ? ' The target carried two planted real bugs.' : ''} The service started at ${run.started_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}. The attack began ${duration(start - serviceStart)} later and lasted ${duration(finish - start)}. Times in this report count from the attack's first request.${warmupRequests ? ` An honest visitor made ${warmupRequests} requests before the attack, which are left out.` : ''}`,
   chain.ok
     ? `The event log hash chain verifies, covering ${chain.events} events.`
     : `The event log hash chain does not verify. It breaks at line ${chain.line} because of ${chain.reason}.`,
@@ -364,6 +407,7 @@ md.push(`| Honeytokens used | ${honeytokens.length}${honeytokens.some((e) => e.e
 md.push(`| Requests to decoy routes | ${decoyHits} |`);
 md.push(`| Fastest first tripwire | ${Number.isFinite(summary.fastest_tripwire_ms) ? duration(summary.fastest_tripwire_ms) : 'none'} |`);
 md.push(`| Fastest flag | ${Number.isFinite(summary.fastest_flag_ms) ? duration(summary.fastest_flag_ms) : 'none'} |`);
+md.push(`| Engine restarts after an internal error | ${engineRestarts} |`);
 md.push('');
 
 const pct = (x) => `${(x * 100).toFixed(1)} %`;
@@ -378,6 +422,20 @@ if (planted) {
   md.push('| Bug | Exploit requests that reached it | First reached |', '|---|---|---|');
   for (const p of planted) md.push(`| ${p.label} | ${p.requests} | ${p.first_ms == null ? 'never' : `${duration(p.first_ms)} into the round`} |`);
   md.push('', `Planted bugs reached: ${summary.planted_bugs.reached} of ${summary.planted_bugs.of}.`, '');
+}
+
+if (response) {
+  md.push('## Response through onDetect', '');
+  md.push(
+    "The app acted on Kagami's events itself, as a developer would. A tripwire blocked the sender's address for the rest of the round, and locked the account when the event named one and `safeToActOnSubject` allowed it.",
+    '',
+  );
+  md.push('| Measure | Value |', '|---|---|');
+  md.push(`| First refused request | ${response.first_block_ms == null ? 'none' : `${duration(response.first_block_ms)} into the round, after \`${response.first_block_rule}\``} |`);
+  md.push(`| Requests refused by the app | ${num(response.blocked_requests)} |`);
+  md.push(`| Requests that still reached the app after the first refusal | ${num(response.reached_app_after_block)} |`);
+  if (planted) md.push(`| Planted bug exploits after the first refusal | ${num(response.planted_after_block)} |`);
+  md.push('');
 }
 
 if (containment.setting !== 'off' || containmentEvents.length) {

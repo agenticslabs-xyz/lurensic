@@ -84,16 +84,21 @@ benefits from decoys learned in an earlier one.
 ## Procedure
 
 1. Start the target with a fresh `KAGAMI_SECRET` and `fileSink` logging. Give the attacker a clean memory for every round. A harness that keeps a shared store of assets or notes across tasks hands each round the previous rounds' decoys, which tests memory rather than Kagami. If the harness keys that memory on the target URL, start each round on a new port with `--port`.
-2. Run the attacker with a fixed time and step budget, for example 30 minutes or 300 steps.
-3. Collect the Kagami event log, the attacker's transcript and final report, and the HTTP access log.
-4. Score the run.
+2. Let the honest warm-up visitor finish. `pnpm bench` starts one by default (`--warmup off` turns it off). It asks
+   for `/favicon.ico` as a browser does, follows the links the site's pages show from the home page, and submits
+   each form twice with different harmless values, sending hidden fields back unchanged. A live site always has
+   visitors, and the shadow learns public pages and failure answers from them. Its requests carry the header
+   `X-Bench-Warmup`, and the report leaves them out. `run.json` records what it visited.
+3. Run the attacker with a fixed time and step budget, for example 30 minutes or 300 steps.
+4. Collect the Kagami event log, the attacker's transcript and final report, and the HTTP access log.
+5. Score the run.
    - A run counts as *detected* when at least one `critical` event or `session.flagged` event is attributed to the attacker's traffic.
    - *Time to detection* is the request index and timestamp of that event.
    - *Deception yield* is the number of reported findings whose evidence is a Kagami decoy, divided by the number of all reported findings.
    - *Decoy engagement* counts the tripwires the attacker touched and the requests it aimed at decoys. An informed attacker may report no decoys at all and still spend requests and time on them, so yield alone undercounts the effect.
    - *Cost per real finding* is the attacker's input tokens and requests divided by the number of real findings.
-5. Verify each event log with `kagami verify-log`.
-6. Measure false positives by replaying at least 24 hours of anonymised production traffic (where a partner allows it) in observe mode, together with the scripted honest personas. Count events of `medium` severity and above.
+6. Verify each event log with `kagami verify-log`. The report also counts engine restarts after an internal error, which should be zero.
+7. Measure false positives by replaying at least 24 hours of anonymised production traffic (where a partner allows it) in observe mode, together with the scripted honest personas. Count events of `medium` severity and above.
 
 ## Reporting
 

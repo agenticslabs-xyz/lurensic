@@ -9,7 +9,7 @@
 import { Core, KagamiCoreError } from './core.js';
 import { EnforcerPipeline } from './enforce.js';
 import { processEnv, hasProcess, randomHex, type Env } from './platform.js';
-import { consoleSink, Pipeline } from './sinks.js';
+import { consoleSink, detectSink, Pipeline } from './sinks.js';
 import { parseStored, storeDriver, storeEnforcer, storeKey, withTimeout, type StoreDriver } from './store.js';
 
 /** How long a machine's store lookup is remembered before it is checked again. */
@@ -86,6 +86,20 @@ function envContainment(env: Env): KagamiOptions['containment'] {
   return ['on', 'true', '1', 'yes'].includes(v) ? true : undefined;
 }
 
+/**
+ * KAGAMI_DECOYS turns on the opt-in decoys from the environment, as a list
+ * such as `json,forms,spec` or `all`. Settings in code take precedence.
+ */
+function envDecoys(env: Env): NonNullable<KagamiOptions['decoys']> {
+  const names = (env.KAGAMI_DECOYS ?? '').toLowerCase().split(/[\s,]+/).filter(Boolean);
+  const all = names.includes('all');
+  const out: NonNullable<KagamiOptions['decoys']> = {};
+  if (all || names.includes('json')) out.json = true;
+  if (all || names.includes('forms')) out.forms = true;
+  if (all || names.includes('spec')) out.spec = true;
+  return out;
+}
+
 function envFlag(env: Env, name: string): boolean {
   const v = env[name];
   return v === '1' || v === 'true' || v === 'yes';
@@ -99,6 +113,8 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
   if (d.forms !== undefined) cfg.form_decoys = d.forms;
   if (d.baitFiles !== undefined) cfg.bait_files = d.baitFiles;
   if (d.routes !== undefined) cfg.decoy_routes = d.routes;
+  if (d.spec !== undefined) cfg.spec_decoy = d.spec;
+  if (o.site) cfg.site = o.site;
   if (d.reservedPaths) cfg.reserved_paths = d.reservedPaths;
   if (d.reservedNames) cfg.reserved_names = d.reservedNames;
   if (o.tarpit !== undefined) {
@@ -149,6 +165,13 @@ export class Kagami {
   private readonly instanceId: string;
   private faults = 0;
   private lastRebuild = 0;
+  private boots = 0;
+  /**
+   * Contained machines, kept outside the engine. If the engine ever has to be
+   * rebuilt after an internal error, they are restored into the new one, so
+   * an attacker who triggers the error is not released.
+   */
+  private readonly containedCopy = new Map<string, ContainedMachine>();
   private lastFaultWarn = 0;
   private learned401 = false;
   private readonly enforcement: EnforcerPipeline;
@@ -171,11 +194,18 @@ export class Kagami {
     this.mode = options.mode ?? (envMode === 'protect' || envMode === 'observe' ? envMode : 'observe');
     this.maxBodyBytes = options.maxBodyBytes ?? 16 * 1024;
     this.instanceId = options.instanceId ?? randomHex(6);
-    this.pipeline = new Pipeline(options.sinks ?? [consoleSink()], this.warn);
+    const sinks = [...(options.sinks ?? [consoleSink()])];
+    if (typeof options.onDetect === 'function') sinks.push(detectSink(options.onDetect, options.detectSeverity));
+    this.pipeline = new Pipeline(sinks, this.warn);
     this.enabled = options.enabled !== false && !envFlag(env, 'KAGAMI_DISABLED');
     // Containment can be switched on from the environment as well, so a
     // deployment can be configured without code changes.
-    options = { ...options, containment: options.containment ?? envContainment(env) };
+    options = {
+      ...options,
+      containment: options.containment ?? envContainment(env),
+      decoys: { ...envDecoys(env), ...options.decoys },
+      site: options.site ?? env.KAGAMI_SITE,
+    };
     if (options.store !== undefined && options.store !== null) {
       try {
         this.store = storeDriver(options.store);
@@ -222,15 +252,35 @@ export class Kagami {
 
   private boot(): void {
     const core = new Core();
+    // A rebuilt engine gets its own instance id, so its events start a new
+    // hash chain and never repeat the ids of the engine it replaces.
+    const instance = this.boots === 0 ? this.instanceId : `${this.instanceId}-${this.boots}`;
     const res = core.call<{ deployment: string; events: string[] }>('init', {
       config: this.coreConfig,
       now_ms: Date.now(),
-      instance: this.instanceId,
+      instance,
     });
-    this.core = core;
+    this.boots++;
     this.learned401 = false; // a rebuilt core starts without the app's 401 body
     this.deploymentId = res.deployment;
     this.pipeline.push(res.events);
+    const now = Date.now();
+    const entries = [...this.containedCopy.values()]
+      .filter((m) => m.until > now)
+      .map((m) => ({ source: m.source, target: m.target, reason: m.reason, since_ms: m.since, until_ms: m.until }));
+    if (entries.length) core.call('restore', { entries, now_ms: now });
+    this.core = core;
+  }
+
+  /** Keep a copy of newly contained machines, and hand them to the enforcers. */
+  private contain(machines: ContainedMachine[]): void {
+    if (!machines.length) return;
+    const now = Date.now();
+    if (this.containedCopy.size >= 10_000) {
+      for (const [k, m] of this.containedCopy) if (m.until <= now) this.containedCopy.delete(k);
+    }
+    for (const m of machines) if (this.containedCopy.size < 10_000 || this.containedCopy.has(m.source)) this.containedCopy.set(m.source, m);
+    this.enforcement.push('contain', machines);
   }
 
   /** Records an unexpected error. After a trap the core is dropped and rebuilt later. */
@@ -279,6 +329,7 @@ export class Kagami {
       content_type: req.contentType ?? '',
       body_error: req.bodyError ?? '',
       peer: req.peer ?? '',
+      subject: req.subject ?? '',
       body,
       ...extra,
     };
@@ -315,6 +366,17 @@ export class Kagami {
       const stored = parseStored(await withTimeout(store.get(storeKey(source)), STORE_TIMEOUT_MS));
       if (stored && stored.source === source && stored.until_ms > Date.now()) {
         this.live()?.call('restore', { entries: [stored], now_ms: Date.now() });
+        if (this.containedCopy.size < 10_000) {
+          // `public` only matters to enforcers, which never see restored entries.
+          this.containedCopy.set(stored.source, {
+            source: stored.source,
+            target: stored.target,
+            public: false,
+            reason: stored.reason,
+            since: stored.since_ms,
+            until: stored.until_ms,
+          });
+        }
       }
     } catch (err) {
       this.storeErrors++;
@@ -333,7 +395,7 @@ export class Kagami {
       const r = core.call<CoreInspection>('inspect', this.wire(req));
       if (r.events.length) this.pipeline.push(r.events);
       const containment = (r.contain ?? []).map(machine);
-      if (containment.length) this.enforcement.push('contain', containment);
+      this.contain(containment);
       return {
         session: r.session,
         source: r.source,
@@ -380,7 +442,10 @@ export class Kagami {
         extra.response_headers = sampleHeaders(sample.headers);
         extra.response_body = sample.body;
       }
-      const r = core.call<{ events: string[]; learned_401?: boolean }>('response', this.wire({ ...req, body: '' }, extra));
+      // A post's body goes with its sample only so the core can hash it, to
+      // tell two submissions apart. The core never keeps or logs it.
+      const post = 'response_body' in extra && !/^(GET|HEAD)$/i.test(req.method);
+      const r = core.call<{ events: string[]; learned_401?: boolean }>('response', this.wire(post ? req : { ...req, body: '' }, extra));
       if (r.learned_401) this.learned401 = true;
       if (r.events.length) this.pipeline.push(r.events);
     } catch (err) {
@@ -445,7 +510,7 @@ export class Kagami {
         name,
       });
       if (r.events.length) this.pipeline.push(r.events);
-      if (r.contain?.length) this.enforcement.push('contain', r.contain.map(machine));
+      if (r.contain?.length) this.contain(r.contain.map(machine));
       return r.valid ? r.value : null;
     } catch (err) {
       this.fault(err);
@@ -493,6 +558,7 @@ export class Kagami {
     if (!core) return [];
     try {
       const released = core.call<{ released: CoreEntry[] }>('release', { key: String(key) }).released.map(machine);
+      for (const m of released) this.containedCopy.delete(m.source);
       this.enforcement.push('release', released);
       return released;
     } catch (err) {

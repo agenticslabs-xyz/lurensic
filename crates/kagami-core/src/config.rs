@@ -154,6 +154,15 @@ pub struct Config {
     pub bait_files: bool,
     /// In protect mode, answer the derived decoy routes.
     pub decoy_routes: bool,
+    /// In protect mode, serve a decoy OpenAPI description at one derived spec
+    /// path, listing the decoy routes (opt-in, because an app may publish its
+    /// own description at that path).
+    pub spec_decoy: bool,
+    /// The site's public host name, such as `shop.example.com`. Decoys name
+    /// it in fake files and records. When empty, the engine uses the first
+    /// real host name it sees and keeps it, so decoys never change with the
+    /// Host header an attacker sends.
+    pub site: String,
     pub tarpit: Tarpit,
     pub containment: Containment,
     pub client_ip: ClientIp,
@@ -183,6 +192,8 @@ impl Default for Config {
             form_decoys: false,
             bait_files: true,
             decoy_routes: true,
+            spec_decoy: false,
+            site: String::new(),
             tarpit: Tarpit::default(),
             containment: Containment::default(),
             client_ip: ClientIp::default(),

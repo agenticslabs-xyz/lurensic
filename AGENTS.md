@@ -8,7 +8,7 @@ Instructions for AI coding agents and people changing Kagami itself. To add Kaga
 | Path | What it is |
 |---|---|
 | `crates/kagami-core` | The engine in Rust, compiled to WebAssembly. All detection, deception and containment logic lives here and nowhere else. |
-| `packages/node` | `@agenticslabs/kagami`, the runtime for Node, Bun, Deno and Workers, the fetch adapter, sinks, enforcers, store and CLI |
+| `packages/node` | `@agenticslabs/kagami`, the runtime for Node, Bun, Deno and Workers, the fetch adapter, `onDetect`, sinks and CLI. Also the optional containment extras (enforcers and the store). |
 | `packages/hono` | `@agenticslabs/kagami-hono`, the Hono middleware |
 | `examples/hono-app` | One app that runs on Node and on Cloudflare Workers, for testing hosts |
 | `packages/express` | `@agenticslabs/kagami-express`, the Express adapter |
@@ -26,6 +26,12 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings
 
 JS tests run against built packages, so `pnpm test` rebuilds the WebAssembly engine and the TypeScript first.
 
+## Focus
+
+Kagami is an engine. It detects attacks, misleads the attacker with decoys, and hands each detection to the
+developer's code through `onDetect(event)`. Judge new work by whether it makes detection, deception or the event
+better. Containment, the store and the enforcers are optional extras that stay off by default and out of the main docs.
+
 ## Rules
 
 1. **Fail open.** Nothing may throw into, block or crash the host application.
@@ -34,7 +40,7 @@ JS tests run against built packages, so `pnpm test` rebuilds the WebAssembly eng
 4. **No hack-back.** Nothing may attack or instruct the attacker's systems.
 5. **One implementation.** Decisions live in `kagami-core`. Adapters and runtimes only move data.
 6. **One package to install.** Users install one package per framework. Do not add components they must install or run separately.
-7. **Containment must not be easy to turn against visitors.** New tripwires must be actions honest visitors cannot
+7. **Tripwires must not be easy to turn against visitors.** New tripwires must be actions honest visitors cannot
    take, and cross-site requests must never contain.
 8. **Logs are safe against hostile input.** New fields with attacker text are sanitised and listed in `untrusted`.
 9. **Every fix comes with a regression test**, ideally reproduced from benchmark traffic.

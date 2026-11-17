@@ -1,8 +1,8 @@
 # @agenticslabs/kagami
 
 The runtime for [Kagami](https://github.com/agenticslabs-xyz/kagami), a deception-based defence against AI-driven
-attacks. It runs on Node, Bun, Deno and Cloudflare Workers, and includes the WebAssembly engine, event sinks,
-enforcers, the optional store and the CLI.
+attacks. It runs on Node, Bun, Deno and Cloudflare Workers, and includes the WebAssembly engine, the `onDetect`
+callback, event sinks and the CLI.
 
 With Express, install [`@agenticslabs/kagami-express`](https://www.npmjs.com/package/@agenticslabs/kagami-express).
 With Hono, install [`@agenticslabs/kagami-hono`](https://www.npmjs.com/package/@agenticslabs/kagami-hono). Both bring
@@ -20,8 +20,16 @@ async function handler(request) {
   return new Response('Hello');
 }
 
-export default kagami(handler);       // reads KAGAMI_SECRET, starts in observe mode
+export default kagami(handler, {
+  subject: (request) => accountIdFrom(request),   // your id for the sender, optional
+  onDetect: (event) => {
+    // Your response, such as locking event.subject or blocking event.source.ip.
+  },
+});                                   // reads KAGAMI_SECRET, starts in observe mode
 ```
+
+`onDetect` receives detection and session events at `low` severity and above (`detectSeverity` changes the floor),
+off the request path. An error it throws is counted and never reaches a request.
 
 The visitor's address comes from the runtime. On Cloudflare Workers, settings come from the Worker's bindings, and the
 package's `workerd` entry loads the engine the way Workers require. Wrangler picks it by itself.
@@ -31,8 +39,8 @@ package's `workerd` entry loads the engine the way Workers require. Wrangler pic
 ```js
 import { Kagami, consoleSink } from '@agenticslabs/kagami';
 
-const kagami = new Kagami({ secret: process.env.KAGAMI_SECRET, sinks: [consoleSink()] });
-const verdict = kagami.inspect({ ip, method, host, path, query, headers, body });
+const kagami = new Kagami({ secret: process.env.KAGAMI_SECRET, sinks: [consoleSink()], onDetect });
+const verdict = kagami.inspect({ ip, method, host, path, query, headers, body, subject });
 ```
 
 For a framework built on the web-standard Request and Response API, use `FetchGuard`, as the Hono adapter does.
@@ -48,9 +56,11 @@ npx @agenticslabs/kagami verify-log events.jsonl   # check a log's hash chain
 ## Sinks
 
 The package includes `consoleSink`, `fileSink`, `webhookSink` (HMAC-signed), `slackSink` (escaped, with link
-previews disabled), `callbackSink` and `memorySink`.
+previews disabled), `callbackSink`, `detectSink` (behind `onDetect`) and `memorySink`.
 
-## Containment and enforcers
+## Optional containment
+
+Most apps act on detections in `onDetect`. Kagami can also act by itself, which is off by default.
 
 With `containment: true`, a machine that trips a tripwire is answered by Kagami (`verdict.action` is a
 response and `verdict.contained` is true), so an adapter must not pass the request on to the application.

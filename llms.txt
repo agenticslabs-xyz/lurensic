@@ -1,10 +1,11 @@
 # Kagami
 
-> Kagami is an open-source, deception-based defence against AI-driven attacks on web applications. It places
-> tripwires that only attackers touch (planted credentials, decoy routes, decoy fields, sealed IDs), records the
-> attack, and can contain the attacking machine so it never reaches the application again. The engine is Rust
-> compiled to WebAssembly and shared by every language. Node and Express are supported today. It needs one
-> self-generated secret, KAGAMI_SECRET, and no account.
+> Kagami is an open-source, deception-based defence against AI-driven attacks on web applications. It is an engine
+> inside the app that detects attacks through tripwires only attackers touch (planted credentials, decoy routes,
+> decoy fields, sealed IDs), misleads the attacking agent with decoys, and hands each detection to the developer's
+> code through one callback, `onDetect(event)`. The developer decides the response. The engine is Rust compiled to
+> WebAssembly and shared by every language. Express, Hono and any fetch app on Node, Bun, Deno and Cloudflare
+> Workers are supported. It needs one self-generated secret, KAGAMI_SECRET, and no account.
 
 Coding agents that are adding Kagami to an application should follow the integration guide step by step and finish
 with `npx @agenticslabs/kagami doctor --json`.
@@ -18,10 +19,8 @@ with `npx @agenticslabs/kagami doctor --json`.
 
 ## Concepts
 
-- [How Kagami works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception, containment
-- [Containment and enforcement](docs/guides/containment.md): cutting attackers off, blocklists and webhooks
-- [Choose your setup](docs/guides/choose-your-setup.md): the path for each framework and host (Express, Hono, Cloudflare Workers, Bun, Deno, serverless), the optional store, and what is not supported
-- [Blocking at your firewall or CDN](docs/guides/firewall.md): recipes that send contained machines to nginx, host firewalls, Cloudflare and cloud WAFs
+- [How Kagami works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception and the event
+- [Choose your setup](docs/guides/choose-your-setup.md): the path for each framework and host (Express, Hono, Cloudflare Workers, Bun, Deno, serverless) and what is not supported
 
 ## Reference
 
@@ -33,5 +32,7 @@ with `npx @agenticslabs/kagami doctor --json`.
 
 ## Optional
 
+- [Containment and enforcement](docs/guides/containment.md): optional, off by default. Kagami cuts attacking machines off by itself
+- [Blocking at your firewall or CDN](docs/guides/firewall.md): optional recipes for contained machines
 - [Benchmark method](docs/BENCHMARK.md): how Kagami is tested against live AI pentest agents
 - [Contributing](CONTRIBUTING.md)

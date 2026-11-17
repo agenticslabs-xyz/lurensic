@@ -4,9 +4,10 @@
  * when something is wrong, the fix.
  *
  * The doctor never touches a tripwire. With containment on, a tripwire would
- * cut off the machine running the doctor. Its only live probe asks for
- * `/.env`, which Kagami answers with a fake file in protect mode and which
- * records one `bait.path` event, but never contains. Requests carry the
+ * cut off the machine running the doctor. Its live probes ask for `/.env`,
+ * which Kagami answers with a fake file in protect mode and which records one
+ * `bait.path` event, and for the deployment's decoy API description, which
+ * records one low `decoy.spec` event. Neither ever contains. Requests carry the
  * user agent `kagami-doctor/<version>` so they are easy to recognise in logs.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -46,6 +47,55 @@ function isPrivate(ip: string): boolean {
     return p === 10 || p === 127 || (p === 172 && q >= 16 && q < 32) || (p === 192 && q === 168) || (p === 100 && q >= 64 && q < 128);
   }
   return a === '::1' || /^f[cd]/i.test(a) || /^fe80/i.test(a);
+}
+
+/**
+ * Where this deployment's decoy API description goes, the paths that
+ * redirect to it, and what the app answers there. A real description at any
+ * of them must not be shadowed.
+ */
+async function checkSpec(base: URL, secret: string, f: typeof fetch, add: (c: Check) => void): Promise<void> {
+  let path: string | undefined;
+  let aliases: string[] = [];
+  try {
+    const k = new Kagami({ secret, mode: 'protect', decoys: { spec: true }, sinks: [], logger: { warn() {} } });
+    const d = k.manifest()?.decoys as { spec_path?: string; spec_aliases?: string[] } | undefined;
+    path = d?.spec_path ?? undefined;
+    aliases = d?.spec_aliases ?? [];
+    await k.close();
+  } catch {
+    return;
+  }
+  if (!path) return;
+  const fetchText = async (p: string): Promise<{ status: number; text: string }> => {
+    const res = await f(new URL(p, base), { headers: { 'user-agent': UA }, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+    return { status: res.status, text: res.status === 200 ? await res.text() : '' };
+  };
+  const main = await fetchText(path);
+  if (main.text.includes('pk_sandbox_')) {
+    add({ id: 'spec', status: 'pass', message: `The decoy API description is served at ${path}, and ${aliases.length} other common paths redirect to it.` });
+    return;
+  }
+  const real: string[] = [];
+  for (const p of [path, ...aliases]) {
+    const r = p === path ? main : await fetchText(p);
+    if (r.status === 200 && /"(openapi|swagger)"\s*:/.test(r.text)) real.push(p);
+  }
+  if (real.length > 0) {
+    add({
+      id: 'spec',
+      status: 'warn',
+      message: `The app publishes its own API description at ${real.join(', ')}. The decoy description would take that place.`,
+      fix: `Leave decoys.spec off, or add ${real.map((p) => `'${p}'`).join(', ')} to decoys.reservedPaths so Kagami leaves them alone.`,
+    });
+  } else {
+    add({
+      id: 'spec',
+      status: 'info',
+      message: `The decoy API description is off or Kagami is in observe mode. The app serves no description at ${path} or the ${aliases.length} other common paths, so it is safe to turn on.`,
+      fix: 'Set KAGAMI_DECOYS=spec, or decoys: { spec: true }, in protect mode.',
+    });
+  }
 }
 
 export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
@@ -120,6 +170,7 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
             fix: 'In protect mode, mount Kagami after the body parsers and before your routes and static files.',
           });
         }
+        if (secret.length >= 32) await checkSpec(base, secret, f, add);
       } catch (err) {
         add({ id: 'reachable', status: 'fail', message: `The app did not answer at ${base.origin}. ${(err as Error)?.message ?? err}`, fix: 'Start the app, or pass the right --url.' });
       }

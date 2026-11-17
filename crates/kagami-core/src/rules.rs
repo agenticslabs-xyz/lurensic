@@ -10,6 +10,7 @@
 
 use crate::normalize::{for_match, Loc, Param};
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -102,11 +103,47 @@ rule!(
     High,
     60,
     10,
-    false,
+    true,
     ["T1595.003"]
+);
+rule!(
+    TAMPER_UNSIGNED_JWT,
+    "tamper.unsigned_jwt",
+    "Unsigned JWT sent",
+    "detection",
+    Critical,
+    High,
+    100,
+    20,
+    true,
+    ["T1606"]
+);
+rule!(
+    TAMPER_DECOY_SECRET,
+    "tamper.decoy_secret",
+    "Cookie or token signed with a decoy secret",
+    "detection",
+    Critical,
+    High,
+    100,
+    20,
+    true,
+    ["T1606", "T1552.001"]
 );
 
 // Signals
+rule!(
+    DECOY_SPEC,
+    "decoy.spec",
+    "Decoy API description fetched",
+    "detection",
+    Low,
+    Medium,
+    15,
+    0,
+    false,
+    ["T1595.003"]
+);
 rule!(
     BAIT_PATH,
     "bait.path",
@@ -750,6 +787,63 @@ const BAIT_SUFFIX: &[&str] = &[
     ".sql.gz",
     ".tar.gz.bak",
 ];
+
+pub(crate) fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            b'=' => break,
+            _ => return None,
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+/// The value without a leading `Bearer ` in any casing. Attacker text can
+/// start with a multi-byte character, so the prefix is read with `get`, which
+/// never splits a character.
+pub(crate) fn strip_bearer(value: &str) -> &str {
+    let v = value.trim();
+    match (v.get(..7), v.get(7..)) {
+        (Some(p), Some(rest)) if p.eq_ignore_ascii_case("bearer ") => rest.trim(),
+        _ => v,
+    }
+}
+
+/// An unsigned JWT is a token whose header says `alg: none` (in any casing)
+/// or whose signature segment is empty. Servers never issue one, so a client
+/// that sends one has forged it. Returns the header's `alg` value. A token
+/// whose signature was changed cannot be told apart without the app's key, so
+/// it is not detected here.
+pub fn unsigned_jwt(value: &str) -> Option<String> {
+    let v = strip_bearer(value);
+    if v.len() > 8192 || !v.starts_with("eyJ") {
+        return None;
+    }
+    let mut parts = v.split('.');
+    let (header, payload, signature) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() || payload.is_empty() || header.len() > 1024 {
+        return None;
+    }
+    let decoded = b64url_decode(header)?;
+    let json: Value = serde_json::from_slice(&decoded).ok()?;
+    let alg = json.get("alg")?.as_str()?;
+    (alg.trim().eq_ignore_ascii_case("none") || signature.is_empty())
+        .then(|| crate::normalize::sanitize(alg, 16))
+}
 
 /// Returns the matched pattern if the path is a classic sensitive-file probe.
 pub fn bait_path(norm_path: &str) -> Option<&'static str> {

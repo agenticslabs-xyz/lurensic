@@ -23,6 +23,9 @@ mode, which is expected.
 | `protect` | PASS | Kagami answered the `/.env` probe with a fake file, so it is mounted and in protect mode. |
 | `protect` | INFO | Kagami did not answer the probe. Expected in observe mode. In protect mode, Kagami is mounted after your routes or static files, or bait files are off. |
 | `protect` | FAIL | Your app serves a real `/.env`. That is a leak. Stop serving dotfiles, rotate every secret in the file, then mount Kagami before your routes. |
+| `spec` | PASS | The decoy API description is served at this deployment's spec path, and the other common description paths redirect to it. |
+| `spec` | WARN | Your app publishes its own API description at one of the paths the decoy would use or redirect. Leave `decoys.spec` off, or add the paths the doctor names to `decoys.reservedPaths` so Kagami leaves them alone. |
+| `spec` | INFO | The decoy description is off or Kagami is in observe mode, and the app has no description at any of those paths, so `KAGAMI_DECOYS=spec` is safe to turn on. |
 | `events` | PASS | The event log holds a `system.started` event, with the mode and features the engine started with. |
 | `client_address` | WARN | Kagami saw your requests as coming from a private address. You are behind a proxy that Kagami does not know about. See [Behind a proxy or CDN](behind-a-proxy.md). |
 | `blocklist` | WARN | The file is not a JSON blocklist. The doctor only checks `blocklistFile({ format: 'json' })` files. |

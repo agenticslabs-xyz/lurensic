@@ -22,6 +22,7 @@ const UNTRUSTED: &[&str] = &[
     "request.host",
     "request.path",
     "request.query",
+    "subject",
     "evidence",
 ];
 
@@ -48,10 +49,23 @@ pub struct ReqSummary {
     pub host: String,
     pub path: String,
     pub query: String,
+    /// Where a browser says the request came from, `same-origin`,
+    /// `same-site`, `cross-site` or `none`, from `Sec-Fetch-Site`, or
+    /// `cross-site` when the `Origin` is another site. Absent for clients
+    /// that send neither, such as scripts. A browser sets these headers
+    /// itself, so for a visitor tricked into a request they are reliable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site: Option<&'static str>,
+    /// The browser was following a link or submitting a form
+    /// (`Sec-Fetch-Mode: navigate`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub navigate: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct EventCtx {
+    /// The app's id for the sender (such as an account id), when the host knows it.
+    pub subject: Option<String>,
     pub source: Source,
     pub request: ReqSummary,
 }
@@ -83,6 +97,8 @@ struct Out<'a> {
     source: Option<&'a Source>,
     #[serde(skip_serializing_if = "Option::is_none")]
     request: Option<&'a ReqSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject: Option<&'a str>,
     evidence: &'a Map<String, Value>,
     mitre_attack: &'static [&'static str],
     untrusted: &'static [&'static str],
@@ -182,6 +198,7 @@ impl EventLog {
             session: d.session.as_ref(),
             source: d.ctx.as_ref().map(|c| &c.source),
             request: d.ctx.as_ref().map(|c| &c.request),
+            subject: d.ctx.as_ref().and_then(|c| c.subject.as_deref()),
             evidence: &d.evidence,
             mitre_attack: d.rule.attack,
             untrusted: UNTRUSTED,

@@ -27,6 +27,7 @@ pub enum Variant {
     AdminPassword = 4,
     GitDeployPassword = 5,
     SmtpPassword = 6,
+    SpecSandboxKey = 7,
 }
 
 impl Variant {
@@ -38,6 +39,7 @@ impl Variant {
             4 => Variant::AdminPassword,
             5 => Variant::GitDeployPassword,
             6 => Variant::SmtpPassword,
+            7 => Variant::SpecSandboxKey,
             _ => return None,
         })
     }
@@ -50,6 +52,7 @@ impl Variant {
             Variant::AdminPassword => "env_admin_password",
             Variant::GitDeployPassword => "git_deploy_password",
             Variant::SmtpPassword => "env_smtp_password",
+            Variant::SpecSandboxKey => "spec_sandbox_key",
         }
     }
 }
@@ -202,6 +205,25 @@ pub fn unseal(keys: &Keys, sealed: &str) -> Option<String> {
     let got = b32_decode(sig.as_bytes(), ALPHA_MIXED)?;
     let m = keys.mac("seal", &[value.as_bytes()]);
     ct_eq(&got, &m[..10]).then(|| value.to_string())
+}
+
+/// The exact API key a decoy route accepts, as a real API would, which is
+/// `sk_live_` and a key from a bait comment, or `pk_sandbox_` and the key in
+/// the decoy description. Any other prefix, length or kind is refused.
+/// Honeytokens are still detected wherever they appear, by `scan`.
+pub fn api_key(keys: &Keys, value: &str) -> bool {
+    [
+        ("sk_live_", Variant::CommentApiKey),
+        ("pk_sandbox_", Variant::SpecSandboxKey),
+    ]
+    .iter()
+    .any(|(prefix, variant)| {
+        value.strip_prefix(prefix).is_some_and(|run| {
+            run.len() == 24
+                && run.bytes().all(|b| b.is_ascii_alphanumeric())
+                && verify_mixed(keys, run.as_bytes()).is_some_and(|f| f.kind == variant.label())
+        })
+    })
 }
 
 #[cfg(test)]

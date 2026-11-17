@@ -11,10 +11,10 @@ sequenceDiagram
     participant K as kagami-core
     participant App as Your app
     C->>A: request
-    A->>K: inspect (method, path, query, headers, body, peer address)
+    A->>K: inspect (method, path, query, headers, body, peer address, subject)
     K->>K: resolve the client address
     K->>K: run the rules, update the session score
-    K->>K: contain the machine if a tripwire fired
+    K->>K: contain the machine if a tripwire fired and containment is on
     alt contained, or a decoy or bait path
         K-->>A: answer it (shadow copy, decoy, fake file or 403)
         A-->>C: Kagami's answer, the app never runs
@@ -25,8 +25,8 @@ sequenceDiagram
         A->>K: decorate (bait comment, decoy field) and report the response
         A-->>C: response
     end
-    K-->>A: events, contained machines
-    Note over A: events go to sinks, contained machines go to enforcers, both off the request path
+    K-->>A: events
+    Note over A: events go to onDetect and the sinks, off the request path
 ```
 
 The engine is the same in every language. It is Rust compiled to WebAssembly with no imports, so it has no clock, no
@@ -79,7 +79,21 @@ used, even from another address, Kagami knows which machine found it.
 Names and values are derived from your secret. Two Kagami deployments use different decoy routes, fields and
 credentials, so there is no list an attacker can tell an agent to avoid.
 
-## Containment
+The optional decoy API description lists only decoy routes and carries a sandbox key that is a honeytoken. An
+agent that reads the description first, as most do, tests decoys and uses a planted credential. The session secret
+in the fake `.env` is a decoy too. Any cookie or token signed with it is forged.
+
+## The event
+
+Every detection becomes one event, built and hash-chained inside the engine. The runtime hands it to your
+`onDetect` function and to the sinks after the request. The event names the rule, the session and machine, the
+address and, when your `subject` function returned one, your own account id. Your code decides the
+response. The fields are described in the [README](../../README.md#the-event) and the schema in
+[DESIGN.md](../DESIGN.md#8-audit-log).
+
+## Containment (optional)
+
+Containment is off by default. Most apps act on detections in `onDetect` instead.
 
 ```mermaid
 stateDiagram-v2

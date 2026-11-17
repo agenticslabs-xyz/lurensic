@@ -46,6 +46,20 @@ const FIELD_B: &[&str] = &[
     "_access_level",
 ];
 const FIELD_VALUES: &[&str] = &["standard", "member", "basic", "default", "user"];
+/// Where API descriptions are commonly published. The description is served
+/// at one of the first two, the paths agents try first, chosen per
+/// deployment. The others redirect to it, the way documentation middleware
+/// does, because the same document under several names reads as bait. The
+/// later ones are fallbacks when the first two are reserved.
+const SPEC_PATHS: &[&str] = &[
+    "/openapi.json",
+    "/swagger.json",
+    "/api/openapi.json",
+    "/api/swagger.json",
+    "/v3/api-docs",
+    "/v2/api-docs",
+    "/api-docs.json",
+];
 
 pub struct Decoys {
     pub routes: Vec<String>,
@@ -53,6 +67,10 @@ pub struct Decoys {
     pub mass_field: String,
     pub mass_value: String,
     pub build_id: String,
+    /// Where the decoy API description is served when `spec_decoy` is on.
+    pub spec_path: String,
+    /// Other common description paths, which redirect to `spec_path`.
+    pub spec_aliases: Vec<String>,
 }
 
 fn collides(route: &str, reserved: &[String]) -> bool {
@@ -78,7 +96,26 @@ fn pick_name(keys: &Keys, label: &str, a: &[&str], b: &[&str], reserved: &[Strin
     format!("x_{}", hex(&keys.mac(label, &[b"fallback"])[..3]))
 }
 
+/// The description path and its redirecting aliases, skipping reserved paths.
+fn pick_spec_paths(keys: &Keys, reserved: &[String]) -> (String, Vec<String>) {
+    let free = |p: &&str| {
+        !reserved
+            .iter()
+            .any(|r| crate::normalize::norm_path(r) == *p)
+    };
+    let first = (keys.u32("decoy/spec/path", &[]) % 2) as usize;
+    let order = [SPEC_PATHS[first], SPEC_PATHS[1 - first]]
+        .into_iter()
+        .chain(SPEC_PATHS[2..].iter().copied());
+    let mut free_paths = order.filter(free).map(String::from);
+    let Some(path) = free_paths.next() else {
+        return (String::new(), Vec::new());
+    };
+    (path, free_paths.collect())
+}
+
 pub fn derive(keys: &Keys, reserved_paths: &[String], reserved_names: &[String]) -> Decoys {
+    let (spec_path, spec_aliases) = pick_spec_paths(keys, reserved_paths);
     let mut routes = Vec::new();
     for n in 0u32..64 {
         if routes.len() == 2 {
@@ -103,6 +140,8 @@ pub fn derive(keys: &Keys, reserved_paths: &[String], reserved_names: &[String])
             .pick("decoy/field/value", &[], FIELD_VALUES)
             .to_string(),
         build_id: hex(&keys.mac("decoy/build", &[])[..4])[..7].to_string(),
+        spec_path,
+        spec_aliases,
     }
 }
 

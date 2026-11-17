@@ -23,6 +23,29 @@ export interface FetchAdapterOptions extends KagamiOptions {
    * address on Deno, Bun and @hono/node-server, and nothing elsewhere.
    */
   clientIp?: (request: Request, platform: unknown) => string | undefined;
+  /**
+   * Return your app's id for whoever sent the request, such as an account id,
+   * so each event says whom to act on. It runs before your app, so it sees
+   * only the raw request. Look the account up from your verified session.
+   * Never return a cookie, token or session secret, because events are
+   * logged. Return undefined for anonymous visitors. An error is ignored.
+   */
+  subject?: (request: Request, platform: unknown) => string | number | null | undefined;
+}
+
+/** Call a developer's `subject` function safely. Kagami never fails because of it. */
+export function subjectOf<A extends unknown[]>(fn: ((...args: A) => unknown) | undefined, ...args: A): string | undefined {
+  if (typeof fn !== 'function') return undefined;
+  try {
+    const v = fn(...args);
+    if (typeof v === 'string' || typeof v === 'number') {
+      const s = String(v).slice(0, 256);
+      return s.trim() ? s : undefined;
+    }
+  } catch {
+    /* fail open */
+  }
+  return undefined;
 }
 
 /** What the app can read about the current request, and the seal helpers. */
@@ -45,7 +68,7 @@ type Next = (request: Request) => Promise<Response>;
 const MAX_DECORATE = 1024 * 1024;
 /** The largest body kept for the shadow, as in the Express adapter. */
 const MAX_CAPTURE = 64 * 1024;
-const ENV_KEYS = ['KAGAMI_SECRET', 'KAGAMI_MODE', 'KAGAMI_CONTAINMENT', 'KAGAMI_DISABLED', 'NODE_ENV'] as const;
+const ENV_KEYS = ['KAGAMI_SECRET', 'KAGAMI_MODE', 'KAGAMI_DECOYS', 'KAGAMI_SITE', 'KAGAMI_CONTAINMENT', 'KAGAMI_DISABLED', 'NODE_ENV'] as const;
 const decoder = new TextDecoder();
 const contexts = new WeakMap<Request, KagamiContext>();
 
@@ -287,9 +310,11 @@ export class FetchGuard {
       }
     }
     const contentType = request.headers.get('content-type') ?? undefined;
+    const subject = subjectOf(this.options.subject, request, platform);
     return {
       ip: this.options.clientIp?.(request, platform) ?? peer,
       ...(this.resolveInCore && { peer }),
+      ...(subject !== undefined && { subject }),
       method: request.method,
       host: request.headers.get('host') ?? url.host,
       path: url.pathname,

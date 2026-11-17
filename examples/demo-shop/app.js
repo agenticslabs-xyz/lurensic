@@ -11,9 +11,24 @@
 // marked in the access log, which is the ground truth for scoring.
 //   1. Path traversal on /downloads?file=, linked from the About page.
 //   2. Reflected cross-site scripting in the category filter of /products.
+//
+// With `demo.respond` the shop also acts on Kagami's detections the way a
+// developer would, through `onDetect`. A tripwire blocks the sender's address
+// for the rest of the run, unless a browser was lured to the request from
+// another site, and locks the account when `safeToActOnSubject` says it is safe.
 import path from 'node:path';
 import express from 'express';
-import { kagami } from '@agenticslabs/kagami-express';
+import { kagami, safeToActOnSubject, wasLured } from '@agenticslabs/kagami-express';
+
+/** Rules only an attacker triggers. The shop responds to these and nothing weaker. */
+const RESPOND_TO = new Set([
+  'honeytoken.used',
+  'decoy.param',
+  'decoy.route',
+  'tamper.sealed_value',
+  'tamper.unsigned_jwt',
+  'tamper.decoy_secret',
+]);
 
 /** The in-memory files behind the planted path traversal. Nothing here is real. */
 const VIRTUAL_FILES = new Map([
@@ -41,6 +56,8 @@ const ORDERS = [
   { id: 5002, user: 101, total: 79, items: [4] },
 ];
 const sessions = new Map();
+/** Accounts locked by the shop's own response to a detection, by user id. */
+const lockedAccounts = new Set();
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -76,7 +93,8 @@ ${body}
 
 function currentUser(req) {
   const sid = /(?:^|;\s*)nw_session=([a-f0-9]+)/.exec(req.headers.cookie ?? '')?.[1];
-  return sid ? sessions.get(sid) : undefined;
+  const user = sid ? sessions.get(sid) : undefined;
+  return user && !lockedAccounts.has(String(user.id)) ? user : undefined;
 }
 
 const SENSITIVE = /pass|pwd|secret|token|key|auth|session|cookie/i;
@@ -102,6 +120,9 @@ function redactQuery(q) {
  *   other than the user agent, and never include bodies. A request that
  *   exploited a planted bug carries `planted` with the bug's name.
  * @param demo.plantedBugs add the two planted flaws described at the top of this file.
+ * @param demo.respond act on tripwires through `onDetect`, blocking the
+ *   sender's address and locking the account when that is safe. Blocked
+ *   requests carry `blocked` in the access log with the rule that caused it.
  */
 export function createApp(kagamiOptions = {}, demo = {}) {
   const app = express();
@@ -146,6 +167,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
                 }
               : null,
             ...(res.locals.planted && { planted: res.locals.planted }),
+            ...(res.locals.blocked && { blocked: res.locals.blocked }),
           }, req);
         } catch {
           /* research logging must never affect the app */
@@ -155,6 +177,24 @@ export function createApp(kagamiOptions = {}, demo = {}) {
     });
   }
 
+  // The shop's own response to detections. A blocked address gets a plain
+  // 403 for everything, as a firewall rule written by the developer would.
+  const blocked = new Map();
+  const addressOf = (req) => kagamiOptions.clientIp?.(req) ?? req.ip;
+  if (demo.respond) {
+    app.use((req, res, next) => {
+      const rule = blocked.get(addressOf(req));
+      if (!rule) return next();
+      res.locals.blocked = rule;
+      res.status(403).send(page('Access denied', '<h1>Access denied</h1><p>Requests from your network have been blocked.</p>', undefined));
+    });
+  }
+  const respond = (event) => {
+    if (!RESPOND_TO.has(event.rule)) return;
+    if (event.source?.ip && !wasLured(event) && !blocked.has(event.source.ip)) blocked.set(event.source.ip, event.rule);
+    if (safeToActOnSubject(event)) lockedAccounts.add(event.subject);
+  };
+
   app.use(express.json({ limit: '64kb' }));
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
@@ -163,6 +203,13 @@ export function createApp(kagamiOptions = {}, demo = {}) {
     decoys: { json: true, forms: true, reservedNames: ['name', 'email', 'role'] },
     ignorePaths: ['/healthz'],
     ...kagamiOptions,
+    ...(demo.respond && {
+      subject: (req) => currentUser(req)?.id,
+      onDetect: async (event) => {
+        respond(event);
+        await kagamiOptions.onDetect?.(event);
+      },
+    }),
   });
   app.use(guard);
 

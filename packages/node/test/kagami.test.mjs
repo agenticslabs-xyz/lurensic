@@ -166,3 +166,56 @@ test('a non-trivial request costs well under a millisecond', () => {
   console.log(`  inspect(): ${perReqUs.toFixed(1)} µs per request`);
   assert.ok(perReqUs < 1000, `too slow at ${perReqUs} µs per request`);
 });
+
+test('KAGAMI_DECOYS turns on opt-in decoys, and settings in code win', () => {
+  const secret = 'env-decoys-secret-0123456789abcdef-0123456';
+  const on = new Kagami({ mode: 'protect', sinks: [], logger: { warn() {} }, env: { KAGAMI_SECRET: secret, KAGAMI_DECOYS: 'json, spec' } });
+  assert.equal(typeof on.manifest().decoys.spec_path, 'string');
+  const off = new Kagami({ mode: 'protect', sinks: [], logger: { warn() {} }, decoys: { spec: false }, env: { KAGAMI_SECRET: secret, KAGAMI_DECOYS: 'all' } });
+  assert.equal(off.manifest().decoys.spec_path, null);
+  const none = new Kagami({ mode: 'protect', sinks: [], logger: { warn() {} }, env: { KAGAMI_SECRET: secret } });
+  assert.equal(none.manifest().decoys.spec_path, null);
+});
+
+test('safeToActOnSubject only allows first-party requests with an account', async () => {
+  const { safeToActOnSubject, wasLured } = await import('../dist/index.js');
+  const base = { subject: 'acct_1', request: { method: 'GET', host: 'h', path: '/', query: '' }, evidence: {} };
+  assert.equal(safeToActOnSubject(base), true);
+  assert.equal(safeToActOnSubject({ ...base, subject: undefined }), false);
+  assert.equal(safeToActOnSubject({ ...base, request: { ...base.request, site: 'same-origin' } }), true);
+  assert.equal(safeToActOnSubject({ ...base, request: { ...base.request, site: 'cross-site' } }), false);
+  assert.equal(safeToActOnSubject({ ...base, request: { ...base.request, site: 'same-site' } }), false);
+  // Following a link on the same site is ordinary browsing, by people and by agents driving a browser.
+  assert.equal(safeToActOnSubject({ ...base, request: { ...base.request, site: 'same-origin', navigate: true } }), true);
+  assert.equal(wasLured({ ...base, request: { ...base.request, site: 'cross-site', navigate: true } }), true);
+  assert.equal(wasLured(base), false);
+  assert.equal(safeToActOnSubject({ ...base, evidence: { location: 'cookie' } }), false);
+});
+
+test('after an engine trap the rebuilt engine keeps every containment and starts a fresh chain', async () => {
+  const mem = memorySink();
+  const k = new Kagami({ secret: SECRET, mode: 'protect', containment: true, sinks: [mem], logger: quiet });
+  const route = k.manifest().decoys.routes[0];
+  const attacker = { ip: '203.0.113.90', headers: [['user-agent', 'curl/7.88.1']] };
+  assert.equal(k.inspect(request({ ...attacker, path: route })).contained, true);
+
+  // A trap inside the engine, as an attacker might trigger with hostile input.
+  k['core'].call = () => {
+    throw new WebAssembly.RuntimeError('unreachable');
+  };
+  assert.deepEqual(k.inspect(request(attacker)).action, { type: 'pass' }, 'the request fails open');
+  assert.equal(k['core'], null);
+
+  // The next request rebuilds the engine, and the machine is still contained.
+  const v = k.inspect(request({ ...attacker, path: '/' }));
+  assert.equal(v.contained, true);
+  assert.equal(k.contained().length, 1);
+  assert.equal(k.inspect(request({ ip: '198.51.100.90', path: '/' })).contained, false);
+
+  await k.flush();
+  const started = mem.events.filter((e) => e.rule === 'system.started');
+  assert.equal(started.length, 2);
+  assert.notEqual(started[0].instance, started[1].instance);
+  assert.equal(new Set(mem.events.map((e) => e.id)).size, mem.events.length, 'event ids never repeat');
+  assert.equal((await verifyChain(mem.lines)).ok, true);
+});

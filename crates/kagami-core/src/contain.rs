@@ -163,6 +163,21 @@ pub struct Stored {
     stored_ms: u64,
 }
 
+/// How the app answers failed posts to one method and path.
+#[derive(Debug, Default)]
+struct Failure {
+    /// The first answer seen, with the hash of the request body that got it.
+    pending: Option<(String, Stored)>,
+    /// An answer two different submissions both received.
+    confirmed: Option<Stored>,
+}
+
+/// Statuses a failed form post may answer with and that are safe to replay.
+const FAILURE_STATUSES: &[u16] = &[200, 302, 303, 400, 401, 403, 404, 405, 409, 422];
+/// The largest failure answer kept, and how many paths are remembered.
+const MAX_FAILURE_BODY: usize = 16 * 1024;
+const MAX_FAILURES: usize = 64;
+
 /// Statuses a shared cache may keep and that are safe to replay.
 const REPLAYABLE: &[u16] = &[200, 301, 302, 303, 307, 308, 401, 404, 410];
 /// The largest body the shadow keeps.
@@ -177,8 +192,16 @@ const REFRESH_MS: u64 = 5 * 60 * 1000;
 /// without `Set-Cookie`, and no `Cache-Control: private` or `no-store`.
 /// Anything Kagami replays was already public, so a contained attacker sees
 /// nothing that any anonymous visitor could not see.
+///
+/// The one exception is how the app answers a failed form post, such as a
+/// wrong password, so a contained attacker's login looks like the app's own.
+/// That answer is kept only for anonymous posts, and only after two
+/// submissions with different bodies received byte-identical responses, which
+/// shows the page does not repeat what the visitor sent. Kagami keeps a hash
+/// of each request body for that comparison and never the body itself.
 pub struct Shadow {
     map: HashMap<String, Stored>,
+    failures: HashMap<String, Failure>,
     not_found_html: Option<Stored>,
     not_found_json: Option<Stored>,
     bytes: usize,
@@ -210,6 +233,7 @@ impl Shadow {
     pub fn new(budget: usize) -> Self {
         Shadow {
             map: HashMap::new(),
+            failures: HashMap::new(),
             not_found_html: None,
             not_found_json: None,
             bytes: 0,
@@ -289,6 +313,80 @@ impl Shadow {
 
     pub fn get(&self, key: &str) -> Option<&Stored> {
         self.map.get(key)
+    }
+
+    /// The key for how the app answers failed posts to one method and path.
+    pub fn failure_key(method: &str, norm_path: &str) -> String {
+        format!("{} {norm_path}", method.to_ascii_uppercase())
+    }
+
+    /// Should the host send the response to this post? True until the app's
+    /// failure answer is confirmed, and again when it is due for a refresh.
+    pub fn wants_failure(&self, key: &str, now: u64) -> bool {
+        if self.budget == 0 {
+            return false;
+        }
+        match self.failures.get(key) {
+            None => self.failures.len() < MAX_FAILURES,
+            Some(f) => f
+                .confirmed
+                .as_ref()
+                .map_or(true, |s| now.saturating_sub(s.stored_ms) > REFRESH_MS),
+        }
+    }
+
+    /// Note the app's answer to an anonymous post. `request_hash` identifies
+    /// the request body. Returns true when this answer confirms a failure
+    /// answer, because a different submission received the same bytes.
+    pub fn remember_failure(
+        &mut self,
+        key: &str,
+        request_hash: &str,
+        m: &ResponseMeta,
+        now: u64,
+    ) -> bool {
+        let cc = m.cache_control.to_ascii_lowercase();
+        let ok = FAILURE_STATUSES.contains(&m.status)
+            && !m.set_cookie
+            && !cc.contains("private")
+            && !cc.contains("no-store")
+            && m.body.len() <= MAX_FAILURE_BODY
+            && same_origin(m.location)
+            && (replayable_type(m.content_type)
+                || (m.body.is_empty() && (300..400).contains(&m.status)));
+        if !ok || self.budget == 0 {
+            return false;
+        }
+        if !self.failures.contains_key(key) && self.failures.len() >= MAX_FAILURES {
+            return false;
+        }
+        let stored = Stored {
+            status: m.status,
+            content_type: m.content_type.to_string(),
+            location: m.location.to_string(),
+            body: m.body.to_string(),
+            stored_ms: now,
+        };
+        let f = self.failures.entry(key.to_string()).or_default();
+        let confirms = f.pending.as_ref().is_some_and(|(hash, s)| {
+            hash != request_hash
+                && s.status == stored.status
+                && s.content_type == stored.content_type
+                && s.location == stored.location
+                && s.body == stored.body
+        });
+        if confirms {
+            f.confirmed = Some(stored);
+            f.pending = None;
+        } else {
+            f.pending = Some((request_hash.to_string(), stored));
+        }
+        confirms
+    }
+
+    /// The app's confirmed answer to a failed post, if any.
+    pub fn failure(&self, key: &str) -> Option<&Stored> {
+        self.failures.get(key)?.confirmed.as_ref()
     }
 
     pub fn not_found(&self, json: bool) -> Option<&Stored> {

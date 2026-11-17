@@ -16,6 +16,8 @@ const dataDir = env.KAGAMI_DATA_DIR ?? here;
 // KAGAMI_CONTAINMENT is shadow, block, or empty for off. PLANTED_BUGS=1 adds the two planted flaws.
 const containment = ['shadow', 'block'].includes(env.KAGAMI_CONTAINMENT) ? env.KAGAMI_CONTAINMENT : null;
 const plantedBugs = env.PLANTED_BUGS === '1';
+// DEMO_RESPOND=1 makes the shop act on tripwires through onDetect, blocking the address and locking the account.
+const respond = env.DEMO_RESPOND === '1';
 
 // The secret comes from KAGAMI_SECRET, or else from a file created once in the data folder.
 function loadSecret() {
@@ -59,13 +61,14 @@ const app = createApp(
     // Full request log for benchmark analysis. It holds no bodies, cookies or header values except the user agent.
     accessLog: (record) => appendFile(accessPath, JSON.stringify(record) + '\n', { mode: 0o600 }, () => {}),
     plantedBugs,
+    respond,
   },
 );
 
 const server = app.listen(port, () => {
   console.log(`Northwind Outfitters is running on http://localhost:${port} with Kagami in ${mode} mode (deployment ${app.kagami.deployment ?? 'DISABLED'})`);
   console.log(`Kagami events are written to ${eventsPath} and requests to ${accessPath}`);
-  console.log(`Containment ${containment ?? 'off'}${containment ? `, blocklist ${blocklistPath}` : ''}. Planted bugs ${plantedBugs ? 'on' : 'off'}.`);
+  console.log(`Containment ${containment ?? 'off'}${containment ? `, blocklist ${blocklistPath}` : ''}. Planted bugs ${plantedBugs ? 'on' : 'off'}. Response through onDetect ${respond ? 'on' : 'off'}.`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

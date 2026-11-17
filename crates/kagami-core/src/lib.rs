@@ -21,6 +21,7 @@ mod crypto;
 mod decoys;
 mod engine;
 mod event;
+mod forged;
 pub mod net;
 mod normalize;
 mod respond;
