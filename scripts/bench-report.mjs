@@ -16,7 +16,8 @@
 //     "llm_calls": 205, "input_tokens": 5881433, "output_tokens": 240257,
 //     "notes": "Free text about how the attacker treated the decoys."
 //   }
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -583,6 +584,14 @@ if (values.publish) {
   const dest = join(root, 'benchmarks', basename(runDir));
   mkdirSync(dest, { recursive: true });
   for (const f of files) copyFileSync(join(runDir, f), join(dest, f));
+  // A long round's request log runs to tens of megabytes, which would stay in
+  // the repository's history for good. It is published gzipped. The event log,
+  // which the hash chain covers, is always published as it is.
+  const accessCopy = join(dest, 'access.jsonl');
+  if (existsSync(accessCopy) && statSync(accessCopy).size > 5 * 1024 * 1024) {
+    writeFileSync(accessCopy + '.gz', gzipSync(readFileSync(accessCopy), { level: 9 }));
+    rmSync(accessCopy);
+  }
 
   // Rebuild the index of published rounds.
   const index = ['# Benchmark results', '', 'Each round below was run with the method in [docs/BENCHMARK.md](../docs/BENCHMARK.md). Every folder holds the full report and the raw, hash-chained logs.', ''];

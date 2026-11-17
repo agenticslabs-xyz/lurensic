@@ -129,7 +129,9 @@ The report lists every session that triggered a detection, how long and how many
 the first detection, the first tripwire and the flag, a timeline of each session's detections, and the rules
 that fired. It also lists the deception touchpoints (planted credentials used, decoy fields sent, sealed values
 tampered with, decoy routes and bait files requested) and the share of requests and attacker time spent on
-decoys. Decoy names are recomputed from the round's secret, which stays in the round folder.
+decoys. Decoy names are recomputed from the round's secret, which stays in the round folder. Publishing copies the report, `run.json`, `harness.json` and both logs, never the secret. A request log over 5 MB is
+published gzipped as `access.jsonl.gz`, and the hash-chained event log is always published as it is, so
+`kagami verify-log` runs on it directly.
 
 Kagami cannot see the attacker's findings or token use. Add them in `harness.json` in the round folder and the
 report adds an attacker outcome section with the deception yield and the cost per real finding.
