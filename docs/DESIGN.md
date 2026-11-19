@@ -30,7 +30,7 @@ Existing defences fall into two groups.
 
 **Non-goals**
 
-- Blocking. Kagami detects, deceives and reports. Blocking belongs to the WAF or the app, which can use Kagami's verdicts.
+- Filtering requests. Kagami is not a WAF and does not block requests because of what they contain. It cuts off a machine only after that machine trips a wire (see [Containment](#61-containment)). Payload filtering and volume limits belong to the WAF or CDN, which can use Kagami's verdicts.
 - Hack-back. Kagami does no counter-exploitation and sends no instructions that turn the attacker's tools against their operator.
 - Replacing secure coding. Kagami raises the cost of attacking. It does not fix vulnerabilities.
 
@@ -424,5 +424,5 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 4. Live tests on Render, Cloudflare Workers, AWS Lambda, Vercel and Netlify, and presets for hosts that pass the visitor address in their own way. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
 5. More adapters (Fastify, FastAPI, Django, Go) when people ask for them, with a shared conformance vector suite.
 6. Off-site honeytoken monitoring (cloud canary credentials).
-7. `kagami doctor` (route collision check, config lint) and a local dashboard.
-8. A public evasion challenge and a live benchmark scoreboard.
+7. A decoy route collision check and config lint in `kagami doctor`, and a local dashboard.
+8. A public evasion challenge with live statistics.
