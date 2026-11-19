@@ -8,6 +8,12 @@
 //   --mode      protect (default), observe, or off (Kagami disabled, the baseline)
 //   --contain   off (default), shadow or block
 //   --planted   add the two planted real bugs (see examples/demo-shop/app.js)
+//   --respond   the demo acts on tripwires through onDetect, blocking the
+//               address and locking the account, as a developer would
+//   --warmup    on (default) or off. An honest visitor browses the site before
+//               the attack, as on a live site, so the shadow has pages to learn
+//   --decoys    extra opt-in decoys as KAGAMI_DECOYS, default spec (the demo
+//               shop publishes no API description). Use none to turn it off
 //   --port      use a new port for every round, because some harnesses keep
 //               their memory per target URL
 //
@@ -20,6 +26,7 @@ import { createServer } from 'node:net';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { warmup } from './bench-warmup.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { values } = parseArgs({
@@ -30,6 +37,9 @@ const { values } = parseArgs({
     mode: { type: 'string', default: 'protect' },
     contain: { type: 'string', default: 'off' },
     planted: { type: 'boolean', default: false },
+    respond: { type: 'boolean', default: false },
+    decoys: { type: 'string', default: 'spec' },
+    warmup: { type: 'string', default: 'on' },
     label: { type: 'string', default: '' },
   },
 });
@@ -61,6 +71,8 @@ const run = {
   mode: values.mode,
   containment: values.mode === 'off' ? 'off' : values.contain,
   planted_bugs: values.planted,
+  respond_on_detect: values.respond,
+  extra_decoys: values.decoys === 'none' ? '' : values.decoys,
   port: Number(values.port),
   target_from_docker: `http://host.docker.internal:${values.port}`,
   files: { events: 'kagami-events.jsonl', access: 'access.jsonl', secret: '.kagami-secret' },
@@ -80,6 +92,8 @@ const env = {
   KAGAMI_DATA_DIR: runDir,
   KAGAMI_CONTAINMENT: values.contain === 'off' ? '' : values.contain,
   PLANTED_BUGS: values.planted ? '1' : '',
+  DEMO_RESPOND: values.respond ? '1' : '',
+  KAGAMI_DECOYS: values.decoys === 'none' ? '' : values.decoys,
 };
 delete env.KAGAMI_SECRET; // a fresh secret per round, stored in the run folder
 if (values.mode === 'off') env.KAGAMI_DISABLED = '1';
@@ -95,3 +109,25 @@ child.on('exit', (code) => {
   console.log(`\nRound saved in ${relative(root, runDir)}`);
   process.exit(code ?? 0);
 });
+
+// The honest visitor, once the shop answers.
+if (values.mode !== 'off' && values.warmup !== 'off') {
+  const base = `http://127.0.0.1:${values.port}`;
+  let up = false;
+  for (let i = 0; i < 60 && !up; i++) {
+    try {
+      up = (await fetch(base + '/healthz')).ok;
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  if (up) {
+    try {
+      run.warmup = await warmup(base);
+      writeFileSync(join(runDir, 'run.json'), JSON.stringify(run, null, 2) + '\n');
+      console.log(`Warm-up visitor          ${run.warmup.pages} pages and ${run.warmup.form_posts} form posts. The round is ready.\n`);
+    } catch (err) {
+      console.error(`The warm-up visitor failed. ${err?.message ?? err}`);
+    }
+  }
+}

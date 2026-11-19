@@ -10,7 +10,7 @@
  * the request continues to your app untouched.
  */
 import type { ErrorRequestHandler, Request, RequestHandler, Response } from 'express';
-import { Kagami, type HttpRequest, type KagamiOptions, type Verdict } from '@agenticslabs/kagami';
+import { Kagami, subjectOf, type HttpRequest, type KagamiOptions, type Verdict } from '@agenticslabs/kagami';
 
 export * from '@agenticslabs/kagami';
 
@@ -53,9 +53,25 @@ export interface KagamiExpressOptions extends KagamiOptions {
    * Getting this right matters because sessions and containment are keyed on it.
    */
   clientIp?: (req: Request) => string | undefined;
+  /**
+   * Return your app's id for whoever sent the request, such as `req.user?.id`,
+   * so each event says whom to act on. Never return a cookie, token or session
+   * secret, because events are logged. Mount Kagami after your auth
+   * middleware for `req.user` to be set when the request is inspected. The
+   * function runs again when the response finishes, so events raised then
+   * also see ids your routes set. Return undefined for anonymous visitors.
+   * An error is ignored.
+   */
+  subject?: (req: Request) => string | number | null | undefined;
 }
 
-function toHttpRequest(req: Request, maxBody: number, clientIp?: (req: Request) => string | undefined, resolveInCore = false): HttpRequest {
+function toHttpRequest(
+  req: Request,
+  maxBody: number,
+  clientIp?: (req: Request) => string | undefined,
+  resolveInCore = false,
+  subjectFn?: (req: Request) => unknown,
+): HttpRequest {
   const url = req.originalUrl ?? req.url ?? '/';
   const q = url.indexOf('?');
   const headers: Array<[string, string]> = [];
@@ -74,9 +90,11 @@ function toHttpRequest(req: Request, maxBody: number, clientIp?: (req: Request) 
     body = JSON.stringify(b).slice(0, maxBody);
     contentType = 'application/json';
   }
+  const subject = subjectOf(subjectFn, req);
   return {
     ip: clientIp?.(req) ?? req.ip ?? req.socket?.remoteAddress ?? '',
     ...(resolveInCore && { peer: req.socket?.remoteAddress ?? '' }),
+    ...(subject !== undefined && { subject }),
     method: req.method,
     host: req.get('host') ?? '',
     path: q === -1 ? url : url.slice(0, q),
@@ -178,7 +196,9 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
         // Redirects are often sent with `res.end`, so they have no captured
         // body. Their headers are all the shadow needs.
         const usable = captured.body !== undefined || (status >= 300 && status < 400);
-        k.response(info, status, wanted && usable ? { headers: responseHeaders(res), body: captured.body ?? '' } : undefined);
+        // Routes and later middleware may have identified the sender by now.
+        const subject = subjectOf(options.subject, req) ?? info.subject;
+        k.response({ ...info, ...(subject !== undefined && { subject }) }, status, wanted && usable ? { headers: responseHeaders(res), body: captured.body ?? '' } : undefined);
       } catch {
         /* fail open */
       }
@@ -207,7 +227,7 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
   const middleware: RequestHandler = (req, res, next) => {
     let info: HttpRequest;
     try {
-      info = toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore);
+      info = toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore, options.subject);
     } catch {
       next();
       return;
@@ -242,7 +262,7 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
     let verdict: Verdict;
     try {
       info = {
-        ...toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore),
+        ...toHttpRequest(req, k.maxBodyBytes, options.clientIp, resolveInCore, options.subject),
         body: parsed.body.slice(0, k.maxBodyBytes),
         contentType: 'text/plain',
         bodyError: parsed.type,

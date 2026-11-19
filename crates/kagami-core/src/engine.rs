@@ -38,6 +38,11 @@ pub struct Request {
     /// following `client_ip` in the configuration. This is the safe default
     /// for new adapters, because it keeps every language consistent.
     pub peer: String,
+    /// The app's own id for whoever sent the request, such as an account id,
+    /// as returned by the developer's `subject` function. It is
+    /// copied into every event this request produces, so the developer knows
+    /// whom to act on. It is a label only and never keys a session.
+    pub subject: String,
     pub method: String,
     pub host: String,
     /// Raw path, without query string.
@@ -86,6 +91,16 @@ impl Request {
             && self.header("authorization").is_none()
     }
 
+    /// A form post or API call without credentials, whose failure answer the
+    /// shadow may learn.
+    fn anonymous_post(&self) -> bool {
+        !["GET", "HEAD", "OPTIONS"]
+            .iter()
+            .any(|m| self.method.eq_ignore_ascii_case(m))
+            && self.header("cookie").is_none()
+            && self.header("authorization").is_none()
+    }
+
     /// A browser sent this request on behalf of another site, for example an
     /// auto-submitting form or an image tag on a page the visitor opened.
     /// Browsers say so with `Sec-Fetch-Site: cross-site` or with an `Origin`
@@ -106,6 +121,22 @@ impl Request {
         let origin_host = origin.split_once("://").map_or(origin, |(_, h)| h);
         let host = self.header("host").unwrap_or(&self.host);
         !origin_host.eq_ignore_ascii_case(host.trim())
+    }
+
+    /// Where the browser says the request came from. Only the four values
+    /// browsers send are kept, and an `Origin` from another site counts as
+    /// `cross-site`.
+    fn fetch_site(&self) -> Option<&'static str> {
+        let declared = self
+            .header("sec-fetch-site")
+            .map(|v| v.trim().to_ascii_lowercase());
+        match declared.as_deref() {
+            Some("same-origin") => Some("same-origin"),
+            Some("same-site") => Some("same-site"),
+            Some("cross-site") => Some("cross-site"),
+            Some("none") => Some("none"),
+            _ => self.cross_site().then_some("cross-site"),
+        }
     }
 
     pub fn user_agent(&self) -> &str {
@@ -220,6 +251,10 @@ pub struct Engine {
     shadow: Shadow,
     allow: Vec<Cidr>,
     resolver: net::Resolver,
+    /// The host name decoys use, fixed by `site` or by the first real host
+    /// name seen. A file that changed with the Host header would prove it was
+    /// generated.
+    site: Option<String>,
 }
 
 /// The part of a user agent that identifies a session. Scanners such as
@@ -316,6 +351,10 @@ impl Engine {
                         (cfg.mode == Mode::Protect && cfg.bait_files).into(),
                     ),
                     (
+                        "spec_decoy",
+                        (cfg.mode == Mode::Protect && cfg.spec_decoy).into(),
+                    ),
+                    (
                         "containment",
                         if !cfg.containment.enabled {
                             "off".into()
@@ -370,6 +409,7 @@ impl Engine {
                 shadow: Shadow::new(shadow_budget),
                 allow,
                 resolver,
+                site: None,
             },
             out,
         ))
@@ -478,6 +518,23 @@ impl Engine {
         enforced.then_some(entry)
     }
 
+    /// The decoy API description is on and `norm_path` is where it is served.
+    fn is_spec_path(&self, norm_path: &str) -> bool {
+        self.cfg.spec_decoy
+            && !self.decoys.spec_path.is_empty()
+            && !self.decoys.routes.is_empty()
+            && norm_path == self.decoys.spec_path
+    }
+
+    /// The decoy API description is on and `norm_path` is one of the other
+    /// common description paths, which redirect to it.
+    fn is_spec_alias(&self, norm_path: &str) -> bool {
+        self.cfg.spec_decoy
+            && !self.decoys.spec_path.is_empty()
+            && !self.decoys.routes.is_empty()
+            && self.decoys.spec_aliases.iter().any(|a| a == norm_path)
+    }
+
     fn ignored(&self, norm_path: &str) -> bool {
         self.cfg.ignore_paths.iter().any(|p| {
             let p = normalize::norm_path(p);
@@ -494,7 +551,9 @@ impl Engine {
             )),
             IpLogging::Omit => None,
         };
+        let subject = req.subject.trim();
         EventCtx {
+            subject: (!subject.is_empty()).then(|| sanitize(subject, 128)),
             source: Source {
                 ip,
                 user_agent: sanitize(req.user_agent(), 256),
@@ -504,13 +563,38 @@ impl Engine {
                 host: sanitize(&req.host, 255),
                 path: sanitize(&req.path, 512),
                 query: normalize::redacted_query(&req.query),
+                site: req.fetch_site(),
+                navigate: req
+                    .header("sec-fetch-mode")
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("navigate")),
             },
+        }
+    }
+
+    /// The host name decoys use for this request.
+    fn site_host<'a>(&'a self, req: &'a Request) -> &'a str {
+        if !self.cfg.site.trim().is_empty() {
+            return self.cfg.site.trim();
+        }
+        self.site.as_deref().unwrap_or(&req.host)
+    }
+
+    /// Keep the first real host name, so decoys stay the same whatever Host
+    /// header later requests send. Addresses and single-label names such as
+    /// `localhost` are not kept.
+    fn learn_site(&mut self, req: &Request) {
+        if self.site.is_none() && self.cfg.site.trim().is_empty() {
+            let d = respond::domain(&req.host);
+            if d != "corp.internal" && net::parse_ip(&d).is_none() {
+                self.site = Some(d);
+            }
         }
     }
 
     /// Inspect an incoming request.
     pub fn inspect(&mut self, req: &Request) -> Inspection {
         let now = req.now_ms;
+        self.learn_site(req);
         let sid = self.session_id(&req.ip, req.user_agent());
         let path = normalize::norm_path(&req.path);
 
@@ -565,6 +649,9 @@ impl Engine {
         if decoy_route {
             hits.add(&rules::DECOY_ROUTE, Map::new());
         }
+        if self.is_spec_path(&path) || self.is_spec_alias(&path) {
+            hits.add(&rules::DECOY_SPEC, Map::new());
+        }
 
         let params = normalize::extract(req);
         for p in &params {
@@ -618,7 +705,50 @@ impl Engine {
                 linked.push(f.issued_to());
             }
         }
-        let authorised = !found.is_empty();
+        // A decoy route opens only for its own key, sent the way APIs take keys,
+        // in Authorization (with or without Bearer) or X-API-Key. Honeytokens
+        // anywhere else are still detected above.
+        let authorised = ["authorization", "x-api-key"].iter().any(|h| {
+            req.header(h)
+                .is_some_and(|v| tokens::api_key(&self.keys, rules::strip_bearer(v)))
+        });
+
+        // A forged token with no signature. Checked in the authorization
+        // headers and in every cookie, query and body value.
+        let unsigned = ["authorization", "proxy-authorization"]
+            .iter()
+            .filter_map(|h| req.header(h).map(|v| ("header", v)))
+            .chain(params.iter().map(|p| (p.loc.as_str(), p.value.as_str())))
+            .find_map(|(loc, v)| rules::unsigned_jwt(v).map(|alg| (loc, alg)));
+        if let Some((loc, alg)) = unsigned {
+            hits.add(
+                &rules::TAMPER_UNSIGNED_JWT,
+                ev(&[("location", loc.into()), ("alg", alg.into())]),
+            );
+        }
+
+        // A cookie or token signed with the fake .env's SESSION_SECRET.
+        let signed_values = params
+            .iter()
+            .filter(|p| matches!(p.loc, Loc::Query | Loc::Body) && p.value.starts_with("eyJ"))
+            .map(|p| (p.loc.as_str(), p.value.as_str()));
+        let may_carry = req.header("cookie").is_some()
+            || req.headers.iter().any(|(_, v)| v.contains("eyJ"))
+            || params.iter().any(|p| p.value.starts_with("eyJ"));
+        if may_carry {
+            let secret = respond::decoy_session_secret(&self.keys);
+            if let Some(f) = crate::forged::scan(secret.as_bytes(), &req.headers, signed_values) {
+                hits.add(
+                    &rules::TAMPER_DECOY_SECRET,
+                    ev(&[
+                        ("format", f.format.into()),
+                        ("location", f.location.into()),
+                        ("name", f.name.into()),
+                        ("alg", f.alg.into()),
+                    ]),
+                );
+            }
+        }
 
         for (rule, matched) in rules::classify_ua(req.user_agent()) {
             hits.add(rule, ev(&[("matched", matched.into())]));
@@ -725,11 +855,17 @@ impl Engine {
         let get = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
         let bare = Shadow::key(path, "");
         let hit = if get {
+            // A copy that repeats its own query would answer only that exact
+            // query with an echo and every other one without, which shows the
+            // page is not live. Such pages always get the bare copy instead.
             self.shadow
                 .get(&Shadow::key(path, &req.query))
+                .filter(|s| !echoes_query(&s.body, &req.query))
                 .or_else(|| self.shadow.get(&bare))
         } else {
-            self.shadow.get(&bare)
+            self.shadow
+                .failure(&Shadow::failure_key(&req.method, path))
+                .or_else(|| self.shadow.get(&bare))
         };
         let wants_json = path.starts_with("/api/")
             || req
@@ -782,17 +918,26 @@ impl Engine {
         let method = req.method.to_ascii_uppercase();
         let get = method == "GET" || method == "HEAD";
         let reply = if decoy_route && self.cfg.decoy_routes {
-            let page = respond::page_from_query(&req.query);
+            let page = respond::page_from_query(&self.keys, source, &req.query);
             Some(respond::decoy_route(
                 &self.keys,
                 source,
-                &req.host,
+                self.site_host(req),
                 authorised,
                 page,
                 self.app_401.as_deref(),
             ))
+        } else if get && self.is_spec_path(path) {
+            Some(respond::decoy_spec(
+                &self.keys,
+                source,
+                self.site_host(req),
+                &self.decoys.routes,
+            ))
+        } else if get && self.is_spec_alias(path) {
+            Some(respond::redirect(&self.decoys.spec_path))
         } else if get && self.cfg.bait_files {
-            respond::bait_file(&self.keys, path, source, &req.host)
+            respond::bait_file(&self.keys, path, source, self.site_host(req))
         } else {
             None
         };
@@ -800,14 +945,19 @@ impl Engine {
         // busy with them. Everything else it asks for comes from the shadow
         // or is refused, and never reaches the application.
         let reply = reply.or_else(|| i.contained.then(|| self.contained_reply(req, path, source)));
-        i.capture = reply.is_none()
+        let shadowing = reply.is_none()
             && !i.contained
-            && req.anonymous_get()
             && self.cfg.containment.enabled
-            && self.cfg.containment.action == ContainAction::Shadow
-            && self
-                .shadow
-                .wants(&Shadow::key(path, &req.query), req.now_ms);
+            && self.cfg.containment.action == ContainAction::Shadow;
+        i.capture = shadowing
+            && ((req.anonymous_get()
+                && self
+                    .shadow
+                    .wants(&Shadow::key(path, &req.query), req.now_ms))
+                || (req.anonymous_post()
+                    && self
+                        .shadow
+                        .wants_failure(&Shadow::failure_key(&req.method, path), req.now_ms)));
         if let Some(r) = reply {
             i.action = Action::Respond {
                 status: r.status,
@@ -960,7 +1110,7 @@ impl Engine {
         // here rather than trusting the host, and Kagami's own replies (decoy
         // routes and bait files) are never stored.
         if !req.response_headers.is_empty()
-            && req.anonymous_get()
+            && (req.anonymous_get() || req.anonymous_post())
             && !self.ignored(&path)
             && !self.decoys.is_route(&path)
             && rules::bait_path(&path).is_none()
@@ -973,8 +1123,19 @@ impl Engine {
                 set_cookie: req.response_header("set-cookie").is_some(),
                 body: &req.response_body,
             };
-            self.shadow
-                .remember(&Shadow::key(&path, &req.query), &meta, now);
+            if req.anonymous_get() {
+                self.shadow
+                    .remember(&Shadow::key(&path, &req.query), &meta, now);
+            } else {
+                // Only a hash of the request body is kept, to tell submissions apart.
+                let hash = crate::crypto::sha256_hex(&[req.body.as_bytes()]);
+                self.shadow.remember_failure(
+                    &Shadow::failure_key(&req.method, &path),
+                    &hash,
+                    &meta,
+                    now,
+                );
+            }
         }
         if self.ignored(&path) {
             let (score, state) = self.sessions.peek(&sid);
@@ -1192,6 +1353,8 @@ impl Engine {
                 "debug_param": self.decoys.debug_param,
                 "json_field": self.decoys.mass_field,
                 "json_value": self.decoys.mass_value,
+                "spec_path": self.cfg.spec_decoy.then_some(&self.decoys.spec_path),
+                "spec_aliases": self.cfg.spec_decoy.then_some(&self.decoys.spec_aliases),
             },
             "sessions": self.sessions.len(),
             "containment": {
@@ -1203,4 +1366,23 @@ impl Engine {
             },
         })
     }
+}
+
+/// Does `body` repeat a value from `query`? Values shorter than three
+/// characters are ignored, since they appear in most pages by chance.
+fn echoes_query(body: &str, query: &str) -> bool {
+    let mut pairs = Vec::new();
+    normalize::parse_pairs(query, &mut pairs);
+    pairs.iter().any(|(_, v)| {
+        let v = v.trim();
+        if v.chars().count() < 3 {
+            return false;
+        }
+        let escaped = v
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;");
+        body.contains(v) || body.contains(&escaped)
+    })
 }

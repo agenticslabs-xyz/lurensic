@@ -1,0 +1,24 @@
+{
+  "started_at": "2026-11-17T03:22:11.435Z",
+  "label": "artex-long-6",
+  "kagami_version": "0.1.0",
+  "mode": "protect",
+  "containment": "shadow",
+  "planted_bugs": true,
+  "respond_on_detect": false,
+  "extra_decoys": "spec",
+  "port": 41911,
+  "target_from_docker": "http://host.docker.internal:41911",
+  "files": {
+    "events": "kagami-events.jsonl",
+    "access": "access.jsonl",
+    "secret": ".kagami-secret"
+  },
+  "warmup": {
+    "requests": 17,
+    "pages": 14,
+    "form_posts": 2,
+    "form_gets": 6
+  },
+  "finished_at": "2026-11-17T04:20:59.032Z"
+}

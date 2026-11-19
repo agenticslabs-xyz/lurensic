@@ -241,7 +241,9 @@ fn html_comment_leads_to_decoy_route() {
     // header the app itself does not send.
     assert_eq!(body, r#"{"error":"unauthorized"}"#);
     assert!(!headers.iter().any(|(k, _)| k == "www-authenticate"));
-    assert_eq!(rules_of(&i.events), vec!["decoy.route"]);
+    // Only the bait leads to a decoy route, so one request flags the session.
+    assert_eq!(rules_of(&i.events), vec!["decoy.route", "session.flagged"]);
+    assert_eq!(i.state, State::Flagged);
 
     no_auth
         .headers
@@ -363,8 +365,47 @@ fn logs_are_safe_against_hostile_input() {
             "sensitive query values must be redacted"
         );
         assert!(!line.contains("abc&"), "token values must be redacted");
-        assert_eq!(v["untrusted"].as_array().unwrap().len(), 5);
+        assert_eq!(v["untrusted"].as_array().unwrap().len(), 6);
     }
+}
+
+#[test]
+fn events_name_the_subject_without_keying_on_it() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.json_decoys = true);
+    let field = e.manifest()["decoys"]["json_field"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut attack = with_body(
+        req("203.0.113.9", "curl/8.9", "PATCH", "/api/me"),
+        "application/json",
+        &format!(r#"{{"{field}":"admin"}}"#),
+    );
+    attack.subject = "  acct_42\r\n{\"rule\":\"x\"}  ".into();
+    let i = e.inspect(&attack);
+    assert!(!i.events.is_empty());
+    for line in &i.events {
+        let v: Value = serde_json::from_str(line).unwrap();
+        let subject = v["subject"].as_str().unwrap();
+        assert!(subject.starts_with("acct_42"));
+        assert!(!subject.chars().any(char::is_control));
+        assert!(v["untrusted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "subject"));
+    }
+    let refs: Vec<&str> = i.events.iter().map(String::as_str).collect();
+    assert_eq!(verify_chain(&refs), Ok(()));
+
+    // The subject is a label. Another account on the same machine still
+    // shares the session, and requests without one carry no subject field.
+    let mut other = req("203.0.113.9", "curl/8.9", "GET", "/api/me");
+    other.subject = "acct_7".into();
+    assert_eq!(e.inspect(&other).session, i.session);
+    let plain = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", "/.env"));
+    let v: Value = serde_json::from_str(&plain.events[0]).unwrap();
+    assert!(v.get("subject").is_none());
 }
 
 #[test]
@@ -1217,4 +1258,694 @@ fn the_core_resolves_the_client_address_from_the_peer() {
         Engine::new(cfg, T0, "t").err().unwrap().code,
         "invalid_client_ip"
     );
+}
+
+fn respond_body(i: &kagami_core::Inspection) -> Option<(u16, String)> {
+    match &i.action {
+        Action::Respond { status, body, .. } => Some((*status, body.clone())),
+        _ => None,
+    }
+}
+
+#[test]
+fn decoy_spec_is_opt_in_and_every_operation_is_a_decoy_route() {
+    // Off by default, the spec path reaches the app.
+    let (mut off, _) = engine(Mode::Protect, |_| {});
+    let path = off.manifest()["decoys"]["spec_path"].clone();
+    assert!(path.is_null());
+
+    let (mut e, _) = engine(Mode::Protect, |c| c.spec_decoy = true);
+    let spec_path = e.manifest()["decoys"]["spec_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(off
+        .inspect(&req("203.0.113.9", "curl/8.9", "GET", &spec_path))
+        .events
+        .is_empty());
+
+    let i = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", &spec_path));
+    assert_eq!(rules_of(&i.events), vec!["decoy.spec"]);
+    assert_ne!(i.state, State::Flagged, "fetching a spec is only a signal");
+    let (status, body) = respond_body(&i).expect("the decoy spec is served");
+    assert_eq!(status, 200);
+    let spec: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(spec["openapi"], "3.0.3");
+
+    let routes: Vec<String> = e.manifest()["decoys"]["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap().to_string())
+        .collect();
+    let listed: Vec<&String> = spec["paths"].as_object().unwrap().keys().collect();
+    assert_eq!(listed.len(), routes.len());
+    for p in listed {
+        assert!(routes.contains(p), "{p} is not a decoy route");
+        let hit = e.inspect(&req("198.51.100.20", "python-httpx/0.27", "GET", p));
+        assert!(
+            hit.rules.contains(&"decoy.route"),
+            "{p} must trip decoy.route"
+        );
+    }
+
+    // The sandbox key is a honeytoken bound to the machine that fetched it.
+    let desc = spec["info"]["description"].as_str().unwrap();
+    let key = desc
+        .split("pk_sandbox_")
+        .nth(1)
+        .unwrap()
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect::<String>();
+    let mut used = req("198.51.100.20", "python-httpx/0.27", "GET", &routes[0]);
+    used.headers
+        .push(("authorization".into(), format!("Bearer pk_sandbox_{key}")));
+    let i = e.inspect(&used);
+    let ev: Vec<Value> = i
+        .events
+        .iter()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let token = ev.iter().find(|v| v["rule"] == "honeytoken.used").unwrap();
+    assert_eq!(token["evidence"]["token_kind"], "spec_sandbox_key");
+    assert_eq!(token["evidence"]["cross_source"], true);
+    let (status, _) = respond_body(&i).unwrap();
+    assert_eq!(status, 200, "the key unlocks fake records");
+}
+
+#[test]
+fn decoy_spec_avoids_reserved_paths() {
+    let (mut e, _) = engine(Mode::Protect, |c| {
+        c.spec_decoy = true;
+        c.reserved_paths = [
+            "/openapi.json",
+            "/swagger.json",
+            "/api/openapi.json",
+            "/api/swagger.json",
+            "/v3/api-docs",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    });
+    assert_eq!(e.manifest()["decoys"]["spec_path"], "/v2/api-docs");
+    assert_eq!(
+        e.manifest()["decoys"]["spec_aliases"],
+        serde_json::json!(["/api-docs.json"])
+    );
+    let i = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", "/openapi.json"));
+    assert!(
+        respond_body(&i).is_none(),
+        "a reserved path is never answered"
+    );
+}
+
+#[test]
+fn decoy_spec_lives_where_agents_look_and_other_paths_redirect() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.spec_decoy = true);
+    let m = e.manifest();
+    let path = m["decoys"]["spec_path"].as_str().unwrap().to_string();
+    assert!(path == "/openapi.json" || path == "/swagger.json");
+    let aliases: Vec<String> = m["decoys"]["spec_aliases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(aliases.len(), 6);
+    assert!(!aliases.contains(&path));
+    for (n, alias) in aliases.iter().enumerate() {
+        let i = e.inspect(&req(
+            &format!("203.0.113.{}", 100 + n),
+            "curl/8.9",
+            "GET",
+            alias,
+        ));
+        let Action::Respond {
+            status, headers, ..
+        } = &i.action
+        else {
+            panic!("{alias} is not answered");
+        };
+        assert_eq!(*status, 302);
+        assert!(headers.iter().any(|(k, v)| k == "location" && *v == path));
+        assert!(rules_of(&i.events).contains(&"decoy.spec".to_string()));
+    }
+    // In observe mode nothing is answered.
+    let (mut o, _) = engine(Mode::Observe, |c| c.spec_decoy = true);
+    assert!(
+        respond_body(&o.inspect(&req("203.0.113.9", "curl/8.9", "GET", &aliases[0]))).is_none()
+    );
+}
+
+#[test]
+fn unsigned_jwts_are_a_tripwire() {
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    // {"alg":"none","typ":"JWT"} . {"sub":"1","role":"admin"} . (empty)
+    let none = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIn0.";
+    let mut r = req("203.0.113.9", "python-httpx/0.27", "GET", "/api/me");
+    r.headers
+        .push(("authorization".into(), format!("Bearer {none}")));
+    let i = e.inspect(&r);
+    assert_eq!(i.state, State::Flagged);
+    let v: Value = serde_json::from_str(&i.events[0]).unwrap();
+    assert_eq!(v["rule"], "tamper.unsigned_jwt");
+    assert_eq!(v["evidence"]["alg"], "none");
+    assert_eq!(v["evidence"]["location"], "header");
+    assert!(
+        !i.events[0].contains("eyJzdWIi"),
+        "the token is never logged"
+    );
+
+    // {"alg":"NoNe"} in a cookie, with a junk signature.
+    let mut c = req("203.0.113.10", "python-httpx/0.27", "GET", "/api/me");
+    c.headers.push((
+        "cookie".into(),
+        "token=eyJhbGciOiJOb05lIn0.eyJzdWIiOiIxIn0.abc".into(),
+    ));
+    assert!(rules_of(&e.inspect(&c).events).contains(&"tamper.unsigned_jwt".to_string()));
+
+    // A signed HS256 token, as honest clients send, is silent.
+    let signed = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLWJ5dGVz";
+    let mut ok = req("198.51.100.7", BROWSER, "GET", "/api/me");
+    ok.headers
+        .push(("authorization".into(), format!("Bearer {signed}")));
+    assert!(e.inspect(&ok).events.is_empty());
+}
+
+#[test]
+fn events_say_when_a_browser_was_sent_from_another_site() {
+    let (mut e, _) = engine(Mode::Observe, |_| {});
+    let param = e.manifest()["decoys"]["debug_param"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let target = format!("/account?{param}=1");
+
+    // A signed-in visitor clicks a link on another site that carries the decoy parameter.
+    let mut lured = req("198.51.100.30", BROWSER, "GET", &target);
+    lured
+        .headers
+        .push(("sec-fetch-site".into(), "cross-site".into()));
+    lured
+        .headers
+        .push(("sec-fetch-mode".into(), "navigate".into()));
+    lured.subject = "acct_7".into();
+    let i = e.inspect(&lured);
+    let v: Value = serde_json::from_str(&i.events[0]).unwrap();
+    assert_eq!(v["rule"], "decoy.param");
+    assert_eq!(v["request"]["site"], "cross-site");
+    assert_eq!(v["request"]["navigate"], true);
+
+    // A script sends the same request. It has no browser headers, so neither field appears.
+    let i = e.inspect(&req("203.0.113.30", "python-httpx/0.27", "GET", &target));
+    let v: Value = serde_json::from_str(&i.events[0]).unwrap();
+    assert!(v["request"].get("site").is_none());
+    assert!(v["request"].get("navigate").is_none());
+
+    // An Origin from another site counts as cross-site, and unknown values are dropped.
+    let mut posted = req("198.51.100.31", BROWSER, "POST", "/login");
+    posted
+        .headers
+        .push(("origin".into(), "https://evil.example".into()));
+    posted
+        .headers
+        .push(("sec-fetch-site".into(), "<script>".into()));
+    posted.body = format!("{param}=1");
+    posted.headers.push((
+        "content-type".into(),
+        "application/x-www-form-urlencoded".into(),
+    ));
+    let v: Value = serde_json::from_str(&e.inspect(&posted).events[0]).unwrap();
+    assert_eq!(v["request"]["site"], "cross-site");
+}
+
+#[test]
+fn hostile_encodings_never_panic() {
+    let nasty = [
+        "/..%c0%af..%c0%afetc/passwd",
+        "/%c0%ae%c0%ae/%c0%ae%c0%ae/etc/passwd",
+        "/%ff%fe%fd",
+        "/%e2%80",
+        "/%ed%a0%80",
+        "/a%",
+        "/a%2",
+        "/%%32%65",
+        "/x%0d%0aSet-Cookie:%20a=b",
+    ];
+    let queries = [
+        "key=%c0%af",
+        "key=%ff",
+        "key=%e2%80",
+        "key=abc%0d%0aX:%20y",
+        "key=%",
+        "key=%c0",
+        "%c0%af=1",
+        "key=sk_live_%c0%af%c0%af",
+        "key=%E2%80%A8%E2%80%A9",
+        "key=%F0%9F%98",
+    ];
+    for mode in [Mode::Observe, Mode::Protect] {
+        let (mut e, _) = engine(mode, |c| {
+            c.json_decoys = true;
+            c.spec_decoy = true;
+            c.containment.enabled = true;
+        });
+        let route = e.manifest()["decoys"]["routes"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for p in nasty {
+            let mut r = req("203.0.113.9", "curl/7.88.1", "GET", p);
+            r.status = 404;
+            e.inspect(&r);
+            e.response(&r);
+        }
+        for q in queries {
+            for path in [route.as_str(), "/search"] {
+                let mut r = req("203.0.113.9", "curl/7.88.1", "GET", &format!("{path}?{q}"));
+                r.status = 401;
+                e.inspect(&r);
+                e.response(&r);
+                r.headers.push(("cookie".into(), format!("a={q}")));
+                r.headers
+                    .push(("authorization".into(), format!("Bearer {q}")));
+                e.inspect(&r);
+            }
+        }
+    }
+}
+
+/// Random hostile input in every place an attacker controls. The engine must
+/// never panic, because a panic is an internal error that drops its state.
+#[test]
+fn random_hostile_input_never_panics() {
+    const PIECES: &[&str] = &[
+        "%c0%af",
+        "%c0%ae",
+        "%ff",
+        "%fe",
+        "%e2%80",
+        "%ed%a0%80",
+        "%F0%9F%98",
+        "%",
+        "%2",
+        "%%",
+        "%00",
+        "%0d%0a",
+        "\u{fffd}",
+        "é",
+        "日本",
+        "😀",
+        "\u{202e}",
+        "Bearer ",
+        "bearer\u{a0}",
+        "eyJ",
+        "eyJhbGciOiJub25lIn0",
+        ".",
+        "..",
+        "/",
+        "\\",
+        "s:",
+        ".sig",
+        "=",
+        ";",
+        "&",
+        "?",
+        "#",
+        "'",
+        "\"",
+        "<script>",
+        "{{7*7}}",
+        "${jndi:",
+        "|",
+        ":",
+        "--",
+        "[",
+        "]",
+        "$ne",
+        "sk_live_",
+        "AKIA",
+        " ",
+        "\t",
+        "a",
+        "Z",
+        "9",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    ];
+    let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut text = |n: u64| -> String {
+        let len = (next() % n) as usize;
+        (0..len)
+            .map(|_| PIECES[(next() % PIECES.len() as u64) as usize])
+            .collect()
+    };
+    for mode in [Mode::Observe, Mode::Protect] {
+        let (mut e, _) = engine(mode, |c| {
+            c.json_decoys = true;
+            c.form_decoys = true;
+            c.spec_decoy = true;
+            c.containment.enabled = true;
+        });
+        for i in 0..3000u32 {
+            let path = format!("/{}", text(8));
+            let query = text(8);
+            let mut r = req(
+                &format!("203.0.113.{}", i % 250),
+                &text(4),
+                ["GET", "POST", "PUT", "OPTIONS"][(i % 4) as usize],
+                &format!("{path}?{query}"),
+            );
+            r.headers.push((
+                "cookie".into(),
+                format!("{}={}; {}.sig={}", text(3), text(6), text(3), text(4)),
+            ));
+            r.headers.push(("authorization".into(), text(6)));
+            r.headers.push(("x-forwarded-for".into(), text(4)));
+            r.headers.push(("origin".into(), text(3)));
+            r.headers.push(("sec-fetch-site".into(), text(2)));
+            r.headers.push((
+                "content-type".into(),
+                [
+                    "application/json",
+                    "application/x-www-form-urlencoded",
+                    "text/plain",
+                ][(i % 3) as usize]
+                    .into(),
+            ));
+            r.body = text(10);
+            r.subject = text(3);
+            r.status = [200u16, 302, 401, 404, 500][(i % 5) as usize];
+            let v = e.inspect(&r);
+            e.response(&r);
+            e.verify_sealed(&r, &text(4), &text(2));
+            e.decorate_html(
+                &v.session,
+                &path,
+                &format!(
+                    "<html><body>{}<form method=\"post\">{}</form></body></html>",
+                    text(4),
+                    text(3)
+                ),
+            );
+            e.decorate_json(&format!("{{\"a\":\"{}\"}}", text(3)));
+        }
+    }
+}
+
+#[test]
+fn decoys_never_change_with_the_host_header() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.spec_decoy = true);
+    let route = e.manifest()["decoys"]["routes"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let spec = e.manifest()["decoys"]["spec_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let with_host = |path: &str, host: &str| {
+        let mut r = req("203.0.113.9", "curl/8.9", "GET", path);
+        r.host = host.into();
+        r.headers.retain(|(k, _)| k != "host");
+        r.headers.push(("host".into(), host.into()));
+        r
+    };
+    // A local name first, then the real one, then an address and a forged name.
+    let hosts = [
+        "localhost:3000",
+        "shop.example.co.nz",
+        "127.0.0.1:3000",
+        "evil.example",
+    ];
+    let mut bodies: Vec<Vec<String>> = Vec::new();
+    for h in hosts {
+        let mut seen = Vec::new();
+        for p in ["/.env", "/.git/config", spec.as_str()] {
+            seen.push(respond_body(&e.inspect(&with_host(p, h))).unwrap().1);
+        }
+        let mut keyed = with_host(&route, h);
+        // The sandbox key from the decoy description opens the decoy route.
+        let key = format!(
+            "pk_sandbox_{}",
+            seen[2]
+                .split("pk_sandbox_")
+                .nth(1)
+                .unwrap()
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+        );
+        keyed
+            .headers
+            .push(("authorization".into(), format!("Bearer {key}")));
+        let (status, records) = respond_body(&e.inspect(&keyed)).unwrap();
+        assert_eq!(status, 200, "the planted key unlocks fake records");
+        seen.push(records);
+        bodies.push(seen);
+    }
+    // Everything after the first real host name is identical, whatever the Host header says.
+    assert_eq!(bodies[1], bodies[2]);
+    assert_eq!(bodies[1], bodies[3]);
+    assert!(bodies[1][0].contains("shop.example.co.nz"));
+
+    // The site setting wins from the first request.
+    let (mut fixed, _) = engine(Mode::Protect, |c| c.site = "www.northwind.example".into());
+    let a = respond_body(&fixed.inspect(&with_host("/.env", "127.0.0.1")))
+        .unwrap()
+        .1;
+    let b = respond_body(&fixed.inspect(&with_host("/.env", "other.example")))
+        .unwrap()
+        .1;
+    assert_eq!(a, b);
+    assert!(a.contains("northwind.example"));
+}
+
+#[test]
+fn the_shadow_answers_a_failed_post_the_way_the_app_does() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.containment.enabled = true);
+    let failed = r#"<!doctype html><html><body><h1>Sign in</h1><p>Invalid email or password.</p></body></html>"#;
+    let post = |ip: &str, body: &str| {
+        with_body(
+            req(ip, BROWSER, "POST", "/login"),
+            "application/x-www-form-urlencoded",
+            body,
+        )
+    };
+    let answer = |e: &mut Engine, mut r: Request, status: u16, html: &str| {
+        let i = e.inspect(&r);
+        assert!(i.capture, "the host is asked for the response");
+        r.status = status;
+        r.response_headers = vec![("content-type".into(), "text/html; charset=utf-8".into())];
+        r.response_body = html.into();
+        e.response(&r);
+    };
+    // One failed sign-in is not enough. A second, different one with the same answer confirms it.
+    answer(
+        &mut e,
+        post("198.51.100.1", "email=a%40b.c&password=one"),
+        401,
+        failed,
+    );
+    answer(
+        &mut e,
+        post("198.51.100.2", "email=d%40e.f&password=two"),
+        401,
+        failed,
+    );
+
+    // A page that repeats what the visitor typed is never confirmed.
+    let echo = |who: &str| format!("<html><body>No account for {who}</body></html>");
+    let reset = |ip: &str, who: &str| {
+        with_body(
+            req(ip, BROWSER, "POST", "/reset"),
+            "application/x-www-form-urlencoded",
+            &format!("email={who}"),
+        )
+    };
+    answer(&mut e, reset("198.51.100.3", "ann"), 404, &echo("ann"));
+    answer(&mut e, reset("198.51.100.4", "bob"), 404, &echo("bob"));
+
+    // A request carrying a cookie is never used.
+    let mut signed_in = post("198.51.100.5", "email=x&password=y");
+    signed_in.headers.push(("cookie".into(), "sid=abc".into()));
+    assert!(!e.inspect(&signed_in).capture);
+
+    // The attacker trips a wire and is contained.
+    let route = e.manifest()["decoys"]["routes"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        e.inspect(&req("203.0.113.9", "curl/8.9", "GET", &route))
+            .contained
+    );
+    let (status, body) =
+        respond_body(&e.inspect(&post("203.0.113.9", "email=admin&password=x"))).unwrap();
+    assert_eq!((status, body.as_str()), (401, failed));
+    let (_, body) =
+        respond_body(&e.inspect(&reset("203.0.113.9", "eve"))).unwrap_or((0, String::new()));
+    assert!(
+        !body.contains("ann") && !body.contains("bob"),
+        "an echoing page is never replayed"
+    );
+}
+
+#[test]
+fn the_shadow_never_echoes_a_query_for_some_values_only() {
+    let (mut e, _) = engine(Mode::Protect, |c| c.containment.enabled = true);
+    let page = |q: &str| {
+        format!(
+            "<html><body><form><input name=\"q\" value=\"{q}\"></form><p>Results</p></body></html>"
+        )
+    };
+    let visit = |e: &mut Engine, target: &str, html: &str| {
+        let mut r = req("198.51.100.1", BROWSER, "GET", target);
+        let i = e.inspect(&r);
+        assert!(i.capture);
+        r.status = 200;
+        r.response_headers = vec![("content-type".into(), "text/html; charset=utf-8".into())];
+        r.response_body = html.into();
+        e.response(&r);
+    };
+    // Honest visitors searched for two words, and once with no query.
+    visit(&mut e, "/search", &page(""));
+    visit(&mut e, "/search?q=jacket", &page("jacket"));
+    visit(&mut e, "/search?q=beanie", &page("beanie"));
+    // A page that does not repeat its query is still replayed for that exact URL.
+    visit(
+        &mut e,
+        "/products?page=2",
+        "<html><body>Second page of products</body></html>",
+    );
+
+    let route = e.manifest()["decoys"]["routes"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        e.inspect(&req("203.0.113.9", "curl/8.9", "GET", &route))
+            .contained
+    );
+    for q in ["jacket", "beanie", "hello", "%3Cscript%3E"] {
+        let (_, body) = respond_body(&e.inspect(&req(
+            "203.0.113.9",
+            "curl/8.9",
+            "GET",
+            &format!("/search?q={q}"),
+        )))
+        .unwrap();
+        assert!(
+            body.contains("value=\"\""),
+            "q={q} must get the same page as any other query"
+        );
+    }
+    let (_, body) =
+        respond_body(&e.inspect(&req("203.0.113.9", "curl/8.9", "GET", "/products?page=2")))
+            .unwrap();
+    assert!(body.contains("Second page"));
+}
+
+#[test]
+fn decoy_routes_take_keys_and_cursors_the_way_a_real_api_does() {
+    let (mut e, _) = engine(Mode::Protect, |_| {});
+    let route = e.manifest()["decoys"]["routes"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let visit = e.inspect(&req("203.0.113.9", "Mozilla/5.0 agent", "GET", "/"));
+    let home = e
+        .decorate_html(
+            &visit.session,
+            "/",
+            "<!doctype html><html><head></head><body><h1>Shop</h1></body></html>",
+        )
+        .unwrap();
+    let key = home
+        .split("sk_live_")
+        .nth(1)
+        .unwrap()
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect::<String>();
+    let full = format!("sk_live_{key}");
+    let ask = |e: &mut Engine, ip: &str, target: &str, header: Option<(&str, String)>| {
+        let mut r = req(ip, "curl/8.9", "GET", target);
+        if let Some((k, v)) = header {
+            r.headers.push((k.into(), v));
+        }
+        let i = e.inspect(&r);
+        let used = i.rules.contains(&"honeytoken.used");
+        (respond_body(&i).unwrap(), used)
+    };
+    // The key anywhere but where APIs take keys is detected, and the route stays shut.
+    let wrong = [
+        ("user-agent", full.clone()),
+        ("cookie", format!("key={full}")),
+        ("authorization", format!("Bearer pk_live_{key}")),
+        ("authorization", format!("Bearer {key}")),
+    ];
+    for (n, (k, v)) in wrong.into_iter().enumerate() {
+        let ((status, _), used) = ask(
+            &mut e,
+            &format!("203.0.113.{}", 10 + n),
+            &route,
+            Some((k, v)),
+        );
+        assert_eq!(status, 401, "{k}");
+        assert!(used, "the planted key is still detected in {k}");
+    }
+    let ((status, _), _) = ask(&mut e, "203.0.113.20", &format!("{route}?key={full}"), None);
+    assert_eq!(status, 401);
+    // The places a real API reads a key.
+    for (n, h) in [
+        ("authorization", format!("Bearer {full}")),
+        ("authorization", full.clone()),
+        ("x-api-key", full.clone()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ((status, _), _) = ask(&mut e, &format!("203.0.113.{}", 30 + n), &route, Some(h));
+        assert_eq!(status, 200);
+    }
+    // An issued cursor leads on. An edited one, or another machine's, is refused.
+    let auth = || Some(("authorization", format!("Bearer {full}")));
+    let ((_, page1), _) = ask(&mut e, "203.0.113.40", &route, auth());
+    let next = serde_json::from_str::<Value>(&page1).unwrap()["next_cursor"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ((status, page2), _) = ask(
+        &mut e,
+        "203.0.113.40",
+        &format!("{route}?cursor={next}"),
+        auth(),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(serde_json::from_str::<Value>(&page2).unwrap()["page"], 2);
+    let edited = format!("25{}", &next[1..]);
+    for (ip, cursor) in [
+        ("203.0.113.40", edited.as_str()),
+        ("203.0.113.40", "25"),
+        ("198.51.100.41", next.as_str()),
+    ] {
+        let ((status, body), _) = ask(&mut e, ip, &format!("{route}?cursor={cursor}"), auth());
+        assert_eq!(
+            (status, body.as_str()),
+            (400, r#"{"error":"invalid cursor"}"#),
+            "cursor {cursor} from {ip}"
+        );
+    }
+    // Pages are read leniently, as most APIs do.
+    let ((status, body), _) = ask(&mut e, "203.0.113.40", &format!("{route}?page=3"), auth());
+    assert_eq!(status, 200);
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["page"], 3);
 }

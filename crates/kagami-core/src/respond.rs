@@ -66,6 +66,12 @@ const SMTP_HOSTS: &[&str] = &[
     "email-smtp.eu-west-1.amazonaws.com",
 ];
 
+/// The `SESSION_SECRET` in the fake `.env`. It is fixed per deployment. A
+/// cookie or token signed with it was forged by whoever read the fake file.
+pub fn decoy_session_secret(keys: &Keys) -> String {
+    hex(&keys.mac("bait/env/session-secret", &[])[..16])
+}
+
 /// The fake `.env`. A file holding a database, an admin password, an API
 /// key, a JWT secret and AWS keys at once reads as bait to an agent that
 /// expects one, so this file is short and ordinary. Its layout is fixed per
@@ -88,10 +94,7 @@ fn env_file(keys: &Keys, tag: Tag, d: &str) -> String {
         });
     }
     out.push_str(&format!("APP_URL=https://{d}\n"));
-    out.push_str(&format!(
-        "SESSION_SECRET={}\n",
-        hex(&keys.mac("bait/env/session-secret", &[])[..16])
-    ));
+    out.push_str(&format!("SESSION_SECRET={}\n", decoy_session_secret(keys)));
     if bit(6) {
         out.push_str("REDIS_URL=redis://localhost:6379\n");
     }
@@ -172,7 +175,7 @@ pub fn decoy_route(
     session: &str,
     host: &str,
     authorised: bool,
-    page: u32,
+    page: Option<u32>,
     app_401: Option<&str>,
 ) -> Reply {
     if !authorised {
@@ -182,6 +185,9 @@ pub fn decoy_route(
         }
         return r;
     }
+    let Some(page) = page else {
+        return json_reply(400, json!({"error": "invalid cursor"}), &[]);
+    };
     let d = domain(host);
     let page = page.max(1);
     let records: Vec<Value> = (0..25u32)
@@ -200,10 +206,7 @@ pub fn decoy_route(
             })
         })
         .collect();
-    let cursor = b32_encode(
-        &keys.mac("decoy/cursor", &[session.as_bytes(), &page.to_be_bytes()])[..10],
-        ALPHA_MIXED,
-    );
+    let cursor = cursor_suffix(keys, session, page);
     json_reply(
         200,
         json!({"data": records, "page": page, "per_page": 25, "has_more": true, "next_cursor": format!("{}{cursor}", page + 1)}),
@@ -218,21 +221,151 @@ fn capitalise(s: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Page number from `?page=N` or a `cursor` produced above (leading digits).
-pub fn page_from_query(q: &str) -> u32 {
+/// The suffix of the cursor that leads from `page` to the next page.
+fn cursor_suffix(keys: &Keys, session: &str, page: u32) -> String {
+    b32_encode(
+        &keys.mac("decoy/cursor", &[session.as_bytes(), &page.to_be_bytes()])[..10],
+        ALPHA_MIXED,
+    )
+}
+
+/// The page a decoy route request asks for. `page=N` is read leniently, as
+/// most APIs read it. A `cursor` must be exactly one this route issued to the
+/// same machine, as a real API refuses a cursor it did not issue, so an
+/// edited cursor gets `None`.
+pub fn page_from_query(keys: &Keys, session: &str, q: &str) -> Option<u32> {
     let mut pairs = Vec::new();
     crate::normalize::parse_pairs(q, &mut pairs);
+    if let Some((_, c)) = pairs.iter().find(|(k, _)| k == "cursor") {
+        let digits: String = c
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .take(7)
+            .collect();
+        let page = digits.parse::<u32>().ok().filter(|p| *p >= 2)?;
+        let issued = format!("{page}{}", cursor_suffix(keys, session, page - 1));
+        return (c.as_str() == issued).then_some(page);
+    }
     for (k, v) in pairs {
-        if k == "page" || k == "cursor" {
+        if k == "page" {
             let digits: String = v
                 .chars()
                 .take_while(|c| c.is_ascii_digit())
                 .take(6)
                 .collect();
             if let Ok(n) = digits.parse::<u32>() {
-                return n.max(1);
+                return Some(n.max(1));
             }
         }
     }
-    1
+    Some(1)
+}
+
+const SPEC_TITLES: &[&str] = &[
+    "Partner API",
+    "Integrations API",
+    "Data Sync API",
+    "Operations API",
+];
+
+/// The decoy API description. It describes a separate partner API whose
+/// operations are exactly the deployment's decoy routes, so every operation an
+/// agent tries is a `decoy.route` hit. Its wording is fixed per deployment.
+/// The sandbox key in it is a honeytoken bound to the machine that fetched it.
+pub fn decoy_spec(keys: &Keys, source: &str, host: &str, routes: &[String]) -> Reply {
+    let d = domain(host);
+    let org = capitalise(d.split('.').next().unwrap_or("app"));
+    let title = keys.pick("decoy/spec/title", &[], SPEC_TITLES);
+    let v = keys.mac("decoy/spec/version", &[]);
+    let key = mint_mixed(keys, session_tag(source), Variant::SpecSandboxKey);
+    let description = match keys.u32("decoy/spec/wording", &[]) % 3 {
+        0 => format!("Server-to-server API for approved partners. Send your key as a bearer token. For integration testing use the sandbox key pk_sandbox_{key}."),
+        1 => format!("Read-only data access for {org} partners. Authenticate with a bearer key. Sandbox key for development is pk_sandbox_{key}, rotate before go-live."),
+        _ => format!("Internal integration endpoints. Bearer authentication. Shared test key pk_sandbox_{key} (rate limited)."),
+    };
+    let mut paths = serde_json::Map::new();
+    for route in routes {
+        let leaf = route
+            .rsplit('/')
+            .next()
+            .unwrap_or("records")
+            .replace('-', " ");
+        let id = leaf
+            .split(' ')
+            .enumerate()
+            .map(|(i, w)| if i == 0 { w.to_string() } else { capitalise(w) })
+            .collect::<String>();
+        paths.insert(
+            route.clone(),
+            json!({
+                "get": {
+                    "operationId": format!("list{}", capitalise(&id)),
+                    "summary": format!("List {leaf} records"),
+                    "parameters": [
+                        {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}},
+                        {"name": "cursor", "in": "query", "schema": {"type": "string"}}
+                    ],
+                    "responses": {
+                        "200": {"description": "A page of records", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RecordPage"}}}},
+                        "401": {"description": "Missing or invalid key"}
+                    }
+                }
+            }),
+        );
+    }
+    json_reply(
+        200,
+        json!({
+            "openapi": "3.0.3",
+            "info": {
+                "title": format!("{org} {title}"),
+                "version": format!("1.{}.{}", v[0] % 9, v[1] % 20),
+                "description": description,
+            },
+            "servers": [{"url": "/"}],
+            "security": [{"partnerKey": []}],
+            "paths": paths,
+            "components": {
+                "securitySchemes": {"partnerKey": {"type": "http", "scheme": "bearer"}},
+                "schemas": {
+                    "Record": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "email": {"type": "string", "format": "email"},
+                            "name": {"type": "string"},
+                            "plan": {"type": "string"},
+                            "mfa_enabled": {"type": "boolean"},
+                            "created_at": {"type": "string", "format": "date-time"}
+                        }
+                    },
+                    "RecordPage": {
+                        "type": "object",
+                        "properties": {
+                            "data": {"type": "array", "items": {"$ref": "#/components/schemas/Record"}},
+                            "page": {"type": "integer"},
+                            "per_page": {"type": "integer"},
+                            "has_more": {"type": "boolean"},
+                            "next_cursor": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }),
+        &[],
+    )
+}
+
+/// A redirect in the form Express sends, used for the decoy description's
+/// aliases.
+pub fn redirect(location: &str) -> Reply {
+    Reply {
+        status: 302,
+        headers: vec![
+            ("content-type".into(), "text/plain; charset=utf-8".into()),
+            ("location".into(), location.to_string()),
+            ("vary".into(), "Accept".into()),
+        ],
+        body: format!("Found. Redirecting to {location}"),
+    }
 }

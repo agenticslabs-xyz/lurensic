@@ -226,3 +226,38 @@ test('without a client address Kagami steps aside instead of treating everyone a
   const res = await withIp.fetch(new Request('https://shop.example.com/.env', { headers: { 'x-nf-client-connection-ip': '198.51.100.8' } }));
   assert.match(await res.text(), /^NODE_ENV=production$/m, 'clientIp makes Kagami work');
 });
+
+test('the subject option labels events and onDetect receives them', async () => {
+  const seen = [];
+  const app = kagami(buildApp(), {
+    secret: SECRET,
+    mode: 'protect',
+    sinks: [],
+    logger: quiet,
+    subject: (request) => request.headers.get('x-account') ?? undefined,
+    onDetect: (event) => {
+      seen.push(event);
+    },
+  });
+  await call(app, '/.env', { headers: { 'x-account': 'acct_3', 'user-agent': 'python-requests/2.32' } });
+  await app.kagami.flush();
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((e) => e.subject === 'acct_3' && e.kind !== 'system'));
+});
+
+test('an onDetect call that never settles cannot hold up the other sinks', async () => {
+  const { detectSink, memorySink: mem } = await import('../dist/index.js');
+  const event = { kind: 'detection', severity: 'high', rule: 'bait.path' };
+  const sink = detectSink(() => new Promise(() => {}), 'low', 50);
+  const started = Date.now();
+  await assert.rejects(sink.write([{ line: '{}', event }, { line: '{}', event }]), /within 50 ms/);
+  assert.ok(Date.now() - started < 1000);
+  // Through the engine, the other sinks still receive every event.
+  const after = mem();
+  const app = kagami(buildApp(), { secret: SECRET, mode: 'protect', sinks: [after], logger: quiet, onDetect: () => new Promise(() => {}) });
+  assert.equal(after.name, 'memory');
+  await call(app, '/.env', { headers: { 'user-agent': 'python-requests/2.32' } });
+  await call(app, '/.git/config');
+  await app.kagami.flush();
+  assert.ok(after.events.length >= 2);
+});

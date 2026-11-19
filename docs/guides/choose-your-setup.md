@@ -10,8 +10,11 @@ or run.
 2. **Deceives.** It plants things only an attacker would touch, such as a fake `.env` file, decoy API routes, fake
    credentials, a decoy field in JSON responses and a hidden field in forms. Touching one proves an attack, because an
    honest visitor never sees them.
-3. **Contains.** The machine that touched a decoy is cut off from your real app. It gets copies of public pages and more
-   decoys (the shadow), or a `403` in block mode.
+3. **Hands over.** Each detection goes to your `onDetect` function, with your account id when `subject` returns
+   one. Your code decides the response.
+
+Kagami can also contain attackers itself, cutting the machine off from your real app. That is optional and off by
+default, and the store sections below only matter if you turn it on.
 
 Start in observe mode, which never changes a response, and switch to protect mode when the events look right.
 
@@ -33,6 +36,8 @@ Start in observe mode, which never changes a response, and switch to protect mod
 |---|---|
 | `KAGAMI_SECRET` | Required in production. A random value you generate once with `npx @agenticslabs/kagami secret`. Every decoy is derived from it, so all copies of your app must share it. It is not an account or an API key. |
 | `KAGAMI_MODE` | `observe` (the default) or `protect` |
+| `KAGAMI_SITE` | Your site's public host name, such as `shop.example.com`, which decoys name. Optional. Kagami otherwise keeps the first real host name it sees. Set it when several copies of the app run |
+| `KAGAMI_DECOYS` | The optional decoys, as a list of `json`, `forms` and `spec`, or `all`. Off by default. Run the doctor before turning them on |
 | `KAGAMI_CONTAINMENT` | `on` (the shadow), `block` (a `403`), or unset for off |
 | `KAGAMI_DISABLED` | `1` switches Kagami off completely |
 
@@ -169,7 +174,7 @@ Without Hono, wrap the Worker itself with `export default kagami({ fetch(request
 # wrangler.toml
 [vars]
 KAGAMI_MODE = "protect"
-KAGAMI_CONTAINMENT = "on"
+KAGAMI_DECOYS = "spec"
 ```
 
 ```bash

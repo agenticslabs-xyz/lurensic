@@ -232,6 +232,44 @@ export function callbackSink(fn: (event: KagamiEvent, line: string) => void | Pr
   };
 }
 
+/**
+ * The sink behind the `onDetect` option. It passes detection and session
+ * events, skips Kagami's own system events, and keeps going when one call
+ * fails, so a single bad event never drops the rest of a batch. Kagami waits
+ * at most `timeoutMs` for each call, so a handler that never settles cannot
+ * hold up the other sinks. The handler itself keeps running.
+ */
+export function detectSink(
+  fn: (event: KagamiEvent) => void | Promise<void>,
+  minSeverity: Severity = 'low',
+  timeoutMs = 5000,
+): Sink {
+  const bounded = (p: Promise<void>): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`onDetect did not finish within ${timeoutMs} ms`)), timeoutMs);
+      p.then(
+        () => (clearTimeout(t), resolve()),
+        (e) => (clearTimeout(t), reject(e)),
+      );
+    });
+  return {
+    name: 'onDetect',
+    minSeverity,
+    async write(records) {
+      let failure: unknown;
+      for (const r of records) {
+        if (r.event.kind === 'system') continue;
+        try {
+          await bounded(Promise.resolve().then(() => fn(r.event)));
+        } catch (err) {
+          failure ??= err;
+        }
+      }
+      if (failure !== undefined) throw failure;
+    },
+  };
+}
+
 /** Keeps events in memory for tests and local tooling. */
 export function memorySink(minSeverity: Severity = 'info'): Sink & { events: KagamiEvent[]; lines: string[] } {
   const events: KagamiEvent[] = [];

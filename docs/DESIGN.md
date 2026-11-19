@@ -159,7 +159,44 @@ tripwires shaped like ordinary app data are the ones to extend.
 **Decoy routes.** Each deployment has two decoy routes, such as `/api/v1/partner/billing-sync`, derived from the
 secret and checked against `reservedPaths`. Without a token they return `401` with the body of the first small
 JSON `401` the app itself sent, or `{"error":"unauthorized"}` until one has been seen, so the decoy's errors match
-the app's format. With a honeytoken they return fabricated records with cursor pagination that never ends.
+the app's format. They open only as a real API would, for a decoy API key sent in `Authorization` (with or
+without `Bearer`) or `X-API-Key`, with exactly the prefix it was issued with (`sk_live_` in bait comments,
+`pk_sandbox_` in the decoy description). A planted key anywhere else is still detected as `honeytoken.used`, but
+the route stays shut. Once open they return fabricated records with cursor pagination that never ends. A cursor must
+be exactly one the route issued to the same machine, else the answer is `400 {"error":"invalid cursor"}`, as a
+real API refuses a cursor it did not issue. `page=N` is read leniently.
+
+**One site name.** Fake files, the decoy description and decoy records name the site. Kagami uses `site` (or
+`KAGAMI_SITE`) when set, else the first real host name it sees, and keeps it. Addresses and single-label names such
+as `localhost` are not kept. A fake file that changed with the Host header an attacker sends would prove it was
+generated.
+
+**Decoy API description** (opt-in, `decoys.spec` or `KAGAMI_DECOYS=spec`). AI agents look for an API description
+first and test every operation it lists. In protect mode Kagami serves an OpenAPI 3 document at `/openapi.json` or
+`/swagger.json`, chosen per deployment, because those are the paths agents try first. The other common description
+paths (the other of those two, `/api/openapi.json`, `/api/swagger.json`, `/v3/api-docs`, `/v2/api-docs` and
+`/api-docs.json`) answer with a `302` redirect to it, the way documentation middleware does. The same document under
+several names would read as bait. Paths in `reservedPaths` are skipped, and when both first choices are reserved the
+description moves to the next free path. It describes a separate partner API whose operations are exactly the decoy routes, so every operation
+an agent tries is a `decoy.route` hit. Its description carries a sandbox key, a honeytoken of kind `spec_sandbox_key`
+bound to the machine that read it, which unlocks the decoy routes' fake records. Fetching the description is only the
+low signal `decoy.spec`, because API tools and monitors fetch descriptions too. It is opt-in because an app may
+publish its own description at one of these paths. `kagami doctor` checks every one of them and says whether it is
+safe to turn on.
+
+**Unsigned JWTs.** A token in an authorization header, cookie, query or body value whose header says `alg: none` in
+any casing, or whose signature segment is empty, raises `tamper.unsigned_jwt`. Servers never issue such a token,
+so a client that sends one forged it. The evidence holds the `alg` value and where the token was, never the token. A
+token whose signature was changed cannot be told apart without the app's key, so it is not detected. The rule is not
+a containment trigger, because a sibling subdomain can plant a cookie in a visitor's browser.
+
+**Decoy secret.** The fake `.env` carries a `SESSION_SECRET`, fixed per deployment. An agent that believes it is real
+signs its own session cookies and tokens with it, to become another user or raise its privileges. No honest client knows the secret, so
+anything signed with it raises `tamper.decoy_secret`. Kagami checks `express-session` and `cookie-parser` signed
+cookies (`s:<value>.<sig>`, HMAC-SHA256), `cookie-session` pairs (`name` with `name.sig`, HMAC-SHA1, SHA-256 or
+SHA-512 over `name=value`) and JWTs with `alg` HS256, HS384 or HS512 in a cookie, an authorization header or a query
+or body value. The evidence holds the format, where it was, the cookie name and the algorithm, never the cookie,
+token or secret. Like the unsigned JWT rule it is not a containment trigger.
 
 ### 5.2 Signals (accumulate)
 
@@ -178,7 +215,9 @@ byte-set prefilter lets ordinary values skip nearly the whole pattern table.
 | `honeytoken.used` | critical | 100 and 20, instant | T1552.001, T1078 |
 | `decoy.param` | critical | 100 and 20, instant | T1190 |
 | `tamper.sealed_value` | critical | 100 and 20, instant | T1190 |
-| `decoy.route` | high | 60 and 10 | T1595.003 |
+| `tamper.unsigned_jwt` | critical | 100 and 20, instant | T1606 |
+| `tamper.decoy_secret` | critical | 100 and 20, instant | T1606, T1552.001 |
+| `decoy.route` | high | 60 and 10, instant | T1595.003 |
 | `payload.jndi`, `payload.oast` | high | 60 and 5 | T1190 |
 | `client.scanner` | high | 50 and 0 | T1595.002 |
 | `payload.cmdi` | high | 40 and 5 | T1190, T1059 |
@@ -187,6 +226,7 @@ byte-set prefilter lets ordinary values skip nearly the whole pattern table.
 | `bait.path` | medium | 30 and 5 | T1595.003, T1552.001 |
 | `behavior.auth_failures` | medium | 30 and 10 | T1110 |
 | `client.forged_forwarding` | medium | 35 and 5 | |
+| `decoy.spec` | low | 15 and 0 | T1595.003 |
 | `request.malformed_body` | low | 20 and 5 | |
 | `request.absolute_target` | low | 20 and 5 | |
 | `client.automation`, `client.ai_agent` | info | 5 and 0, 0 and 0 | |
@@ -209,6 +249,7 @@ Info level rules add to the score but never produce a standalone event. They app
 |---|---|---|
 | Bait files (`/.env`, `/.git/config`, `/.aws/credentials`) | on | Those paths return fake files instead of the app's response, which is normally a 404. Variants such as `/.env.local` get the app's own response, because identical copies under several names read as bait, and probing them still raises `bait.path`. The `.env` is short and holds one or two service credentials. Its layout is fixed per deployment and only the credential values differ between sources |
 | Decoy routes | on | Two derived paths answer with a 401 in the app's own format or with fake data |
+| Decoy API description | **off** | `/openapi.json` or `/swagger.json` answers with an OpenAPI document listing the decoy routes and a sandbox honeytoken, and six other common description paths redirect to it |
 | HTML decoys | on | One HTML comment on the home page and on a keyed subset of about one in three other pages, placed after `<body>` or before `</body>` (fixed per deployment) |
 | JSON decoys | **off** | One field added at the start of top-level JSON objects by text insertion, with key order and formatting preserved |
 | Form decoys | **off** | The same field added as a hidden input at the start of every POST form in HTML documents. The app receives one extra form field |
@@ -250,12 +291,20 @@ public responses and never from the live application.
    type, and a body of at most 64 KiB. Decoy routes and bait paths are never stored. Copies are refreshed from live
    traffic every five minutes and held within a memory budget (`shadow_cache_bytes`, 4 MiB by default), oldest first.
 3. A contained GET is answered with the copy for the same URL, else the copy for the bare path without a query
-   string, else the app's own 404 page (HTML or JSON, whichever fits the request). Other methods get the bare path's
-   copy or the 404. Replayed pages carry the same bait as live ones, decorated for the contained machine.
-4. Decoy routes and bait files keep answering a contained machine, so it stays busy with them.
+   string, else the app's own 404 page (HTML or JSON, whichever fits the request). Replayed pages carry the same bait
+   as live ones, decorated for the contained machine. A copy that repeats its own query string is never used, even for the same URL,
+   because it would echo only the queries visitors happened to send. Such pages always get the bare copy, so every
+   query is answered the same way.
+4. A contained POST, PUT, PATCH or DELETE is answered the way the app answers a failed one, such as its own wrong
+   password page with its own status, else the bare path's copy or the 404. Kagami learns that answer from anonymous
+   requests (no cookie, no `Authorization`) and keeps it only after two submissions with different bodies received
+   byte-identical responses, which shows the page does not repeat what the visitor sent. To tell submissions apart it
+   keeps a SHA-256 hash of each request body, never the body. The answer must meet the same rules as above, with a
+   body of at most 16 KiB, and at most 64 such answers are kept.
+5. Decoy routes and bait files keep answering a contained machine, so it stays busy with them.
 
-Because only what a shared cache could hold is replayed, a contained attacker never sees anything an anonymous
-visitor could not. A page reflecting another visitor's query string is replayed only to a request with the same
+Because only what a shared cache could hold, or an answer that two different visitors received byte for byte, is
+replayed, a contained attacker never sees anything an anonymous visitor could not. A page reflecting another visitor's query string is replayed only to a request with the same
 query string.
 
 **Enforcers.** The host hands each new containment to its enforcers, which push it to systems in front of the app.
@@ -291,7 +340,8 @@ The full threat model, including what Kagami does *not* defend against, is in [T
 Events are built and serialised inside the core and handed to the host as opaque JSON lines.
 Hosts write them verbatim.
 
-- **Schema.** Events use the schema `kagami.event/v1`. The fields always appear in this order. `schema, id, seq, ts, deployment, instance, mode, kind, rule, title, severity, confidence, session?, source?, request?, evidence, mitre_attack, untrusted, prev_hash, hash`.
+- **Schema.** Events use the schema `kagami.event/v1`. The fields always appear in this order. `schema, id, seq, ts, deployment, instance, mode, kind, rule, title, severity, confidence, session?, source?, request?, subject?, evidence, mitre_attack, untrusted, prev_hash, hash`. `request` holds `method, host, path, query` and, for browsers, `site?` (from `Sec-Fetch-Site`, or `cross-site` when the `Origin` is another site) and `navigate?` (from `Sec-Fetch-Mode`).
+- **Subject.** When the host passes `subject`, the app's own id for the sender such as an account id, every event from that request carries it. It is sanitised, capped at 128 characters and listed in `untrusted`, because an app may read it from a token the client sent. Apps must never pass a cookie, token or session secret as the subject, because events are logged. It is a label only. Sessions and machines are never keyed on it.
 - **Hash chain.** Each event's `hash` is `SHA-256(prev_hash ‖ "\n" ‖ body)`, where `body` is the line without its final `hash` field. Each instance starts from the all-zero genesis hash at `seq 0`. `kagami verify-log` checks one or more interleaved instance chains.
 - **Sanitisation.** C0 and C1 control characters and bidi overrides are replaced, fields are truncated, query values with sensitive names (`password`, `token`, `key`, `session` and similar) are redacted, cookie values are never logged, and honeytokens are masked (for example `aB3c…xYz9`).
 - **Untrusted marking.** The `untrusted` field lists the fields that hold attacker-controlled text. Anything that reads these events, such as SIEM rules, chat-ops or AI triage assistants, must treat them as data. Attackers can and will put prompt injection into user agents and paths.
@@ -305,6 +355,7 @@ Hosts write them verbatim.
 | `fileSink` | info | Append only, created with mode 0600 |
 | `webhookSink` | medium | HTTPS only (plain http is allowed only for localhost), signed with a `kagami-signature` header carrying a timestamp and an HMAC of the body, redirects never followed, 5 second timeout, 1 retry |
 | `slackSink` | high | Escaped summary only, link unfurling disabled, no attacker text that could create mentions or links |
+| `detectSink` | low | Behind the `onDetect` option. Skips `system` events, and one failing call never drops the rest of a batch |
 | `callbackSink`, `memorySink` | info | In-process integrations and tests |
 
 Delivery is asynchronous and bounded to a queue of 10 000 events. Overflow is counted and dropped. A failing sink never affects requests.
@@ -340,10 +391,15 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 
 | Option | Default | Description |
 |---|---|---|
+| `onDetect` | none | `(event) => void | Promise<void>`, called off the request path with each detection and session event. Added next to `sinks`, never in place of them. The main way an app acts on a detection |
+| `detectSeverity` | `low` | The lowest severity passed to `onDetect` |
+| `subject` (each adapter) | none | A function that returns the app's id for the sender, copied into every event as `subject`. Express passes `req` and calls it again when the response finishes. The fetch and Hono adapters pass the raw `Request` and the platform |
 | `secret` | `KAGAMI_SECRET` | At least 32 characters. Without it in production Kagami disables itself and warns. In development a temporary secret is used. |
 | `mode` | `KAGAMI_MODE` or `observe` | `observe` or `protect` |
 | `enabled` | `true` | `KAGAMI_DISABLED=1` also disables Kagami |
 | `decoys.html`, `decoys.json`, `decoys.forms`, `decoys.baitFiles`, `decoys.routes` | `true`, `false`, `false`, `true`, `true` | Protect mode features |
+| `site` | `KAGAMI_SITE`, else the first real host name seen | The site's public host name, which decoys name in fake files and records. Pinned so decoys never change with the Host header. Set it when several copies of the app run |
+| `decoys.spec` | `false` | The decoy API description. `KAGAMI_DECOYS` (`json`, `forms`, `spec` or `all`) turns the opt-in decoys on from the environment, and settings in code take precedence |
 | `decoys.reservedPaths`, `decoys.reservedNames` | `[]` | Real paths and names that decoys must avoid |
 | `tarpit` | `false` | `true` or `{ minMs, maxMs }` |
 | `thresholds` | `{ suspicious: 30, flagged: 70 }` | |
@@ -362,9 +418,11 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 
 ## 12. Roadmap
 
-1. **Utsusemi.** A richer shadow that also answers personalised routes for contained machines with consistent fake data.
-2. Live tests on Render, Cloudflare Workers, AWS Lambda, Vercel and Netlify, and presets for hosts that pass the visitor address in their own way. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
-3. More adapters (Fastify, FastAPI, Django, Go) when people ask for them, with a shared conformance vector suite.
-4. Off-site honeytoken monitoring (cloud canary credentials) and a forged JWT tripwire.
-5. `kagami doctor` (route collision check, config lint) and a local dashboard.
-6. A public evasion challenge and a live benchmark scoreboard.
+1. More tripwires on actions every AI attack harness takes, each judged by a live benchmark round. Candidates are a decoy in GraphQL introspection and a decoy API path in JavaScript bundles.
+2. Detection and deception on hosts that do not pass the visitor address. This needs a visitor key in the core, because sessions and machines are keyed on the address today.
+3. **Utsusemi.** A richer shadow that also answers personalised routes for contained machines with consistent fake data.
+4. Live tests on Render, Cloudflare Workers, AWS Lambda, Vercel and Netlify, and presets for hosts that pass the visitor address in their own way. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
+5. More adapters (Fastify, FastAPI, Django, Go) when people ask for them, with a shared conformance vector suite.
+6. Off-site honeytoken monitoring (cloud canary credentials).
+7. `kagami doctor` (route collision check, config lint) and a local dashboard.
+8. A public evasion challenge and a live benchmark scoreboard.

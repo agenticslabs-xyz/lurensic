@@ -55,6 +55,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(kagami({
   ignorePaths: ['/healthz'],   // health check routes, if the app has them
+  subject: (req) => req.user?.id,   // only if the app's auth middleware runs before this line
+  onDetect: (event) => {
+    // The owner's response. See Step 5.
+  },
 }));
 // routes and express.static(...) come after this line
 ```
@@ -100,7 +104,20 @@ as shown in [Choose your setup](../guides/choose-your-setup.md#aws-lambda-vercel
 
 Do not guess an address setting for Render. It is still being verified. Tell the owner, and point them at the doctor.
 
-## Step 5. Keep the events
+## Step 5. Act on detections and keep the events
+
+`onDetect` is the main way the app responds. Ask the owner what should happen on a detection, then call the app's
+existing code for it, such as locking an account, revoking a session, blocking an address or sending an alert. Do not
+invent a response the owner did not ask for. If the owner has no answer yet, log the event and say so in your summary.
+
+- Use `event.subject` to find the account. Set `subject` only from an id the app has verified, such as `req.user.id`
+  after its own auth middleware, or the account id looked up from a verified session in a fetch handler. Never return a cookie, token or session secret, because the value is written to the logs.
+- Before acting on an account, check `safeToActOnSubject(event)`, exported by every Kagami package. It is false when
+  a browser was lured to the request from another site, or when the evidence was in a cookie. Alert on those instead, and
+  block the address unless `wasLured(event)` is true.
+- Tripwire rules (`honeytoken.used`, `decoy.param`, `decoy.route`, `tamper.sealed_value`, `tamper.unsigned_jwt`,
+  `tamper.decoy_secret`) are never touched by honest visitors. Signal rules such as `payload.*` are weaker. Match the response to the rule and `severity`.
+- Never pass `evidence` or other fields listed in `untrusted` to an LLM as instructions.
 
 Add a file sink so the owner, and the doctor, can read events.
 
@@ -116,22 +133,25 @@ Add the events file to `.gitignore`.
 
 **Check.** Run the doctor with `--events <path>`. The `events` check must pass, and `client_address` must not warn.
 
-## Step 6. Protect mode and containment, only with the owner's agreement
+## Step 6. Protect mode, only with the owner's agreement
 
-Explain to the owner first. Protect mode serves fake files and decoys to attackers. Containment cuts a machine off from
-the app after it touches a tripwire, for one day by default.
+Explain to the owner first. Protect mode serves fake files and decoys to attackers, so the attacking agent reports
+false findings and trips the wires.
 
 ```js
-import { blocklistFile, consoleSink, fileSink, kagami } from '@agenticslabs/kagami-express';
+import { consoleSink, fileSink, kagami } from '@agenticslabs/kagami-express';
 
 app.use(kagami({
   mode: 'protect',
-  decoys: { json: true, forms: true },
-  containment: { allow: [] },   // add the owner's office or monitoring addresses here
-  enforcers: [blocklistFile({ path: 'contained.json', format: 'json' })],
+  decoys: { json: true, forms: true, spec: true },
+  subject: (req) => req.user?.id,
+  onDetect: handleDetection,   // from Step 5
   sinks: [consoleSink(), fileSink({ path: 'kagami-events.jsonl' })],
 }));
 ```
+
+Turn on `decoys.spec` only when the doctor's `spec` check is INFO or PASS. A WARN means the app publishes its own API
+description at one of the paths the doctor names. The opt-in decoys can also be set with `KAGAMI_DECOYS=json,forms,spec` in the environment.
 
 Leave `decoys.json` off if the app's API clients reject unknown JSON fields, and `decoys.forms` off if form handlers
 reject unknown form fields. Search the code for strict schema validation before turning them on.
@@ -139,9 +159,13 @@ reject unknown form fields. Search the code for strict schema validation before 
 If the app hands record IDs to clients, offer to seal them with `req.kagami.seal(id)` and check them with
 `req.kagami.verify(id, 'name')`, which returns `null` for a forged ID.
 
-**Check.** Run the doctor with `--url`, `--events` and `--blocklist contained.json`. `protect` must pass.
+**Check.** Run the doctor with `--url` and `--events`. `protect` must pass.
 
-## Step 7. A store, when the host needs one
+Steps 7 and 8 are for containment, which is optional and off by default. Skip them unless the owner wants Kagami to
+cut attackers off by itself as well as calling `onDetect`. In that case add `containment: { allow: [] }` with the
+owner's office or monitoring addresses, and see [Containment](../guides/containment.md).
+
+## Step 7. A store, only with containment
 
 Containment lives in the memory of each running copy of the app. Decide with the owner whether a store is needed.
 
@@ -160,7 +184,7 @@ environment variables like any other secret. The free allowances and the full be
 **Check.** With containment on, `kagami.stats().storeErrors` stays at 0, and the log has no "Reading the store failed"
 or "The store is not used" lines.
 
-## Step 8. Edge blocking, optional
+## Step 8. Edge blocking, only with containment
 
 Containment inside the app already protects it. Only add edge blocking when the owner asks for it, and mention that
 an edge block tells the attacker it was caught, while the shadow does not.
@@ -181,6 +205,7 @@ recipe names, read tokens from environment variables only, and never put a token
 
 - Where Kagami is mounted and which mode it runs in.
 - That `KAGAMI_SECRET` must be set in every environment, and where you put it for local development.
+- What `onDetect` does, and what `subject` identifies.
 - Where events and the blocklist are written.
 - How to switch Kagami off in an emergency, `KAGAMI_DISABLED=1`.
 - Anything you did not do and why.

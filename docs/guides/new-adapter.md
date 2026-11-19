@@ -25,7 +25,7 @@ Users install the adapter, which brings the runtime and the engine with it.
 For every request the adapter does the following.
 
 1. **Inspect** before the application runs. Pass the method, host, path, raw query string, headers, body (as text,
-   truncated), and the connection's raw peer address as `peer`. Let the engine resolve the client address from `peer`
+   truncated), the app's id for the sender as `subject` when the developer supplies a function for it, and the connection's raw peer address as `peer`. Let the engine resolve the client address from `peer`
    and the headers. Do not resolve it yourself unless the framework already does so safely.
 2. **Act on the verdict.**
    - `action.type == "respond"` means Kagami answers. Send its status, headers and body, and do not run the

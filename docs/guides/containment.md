@@ -64,14 +64,21 @@ A contained machine in shadow mode gets copies of public responses, never the li
 flowchart TB
     R["Request from a contained machine"] --> D{"Decoy route<br/>or bait file?"}
     D -->|yes| DEC["Decoy answer<br/>as before"]
-    D -->|no| G{"GET with a stored copy<br/>for this URL?"}
+    D -->|no| P{"Form post or<br/>other method?"}
+    P -->|yes| F{"Learned the app's answer<br/>to a failed post?"}
+    F -->|yes| FAIL["That answer,<br/>such as its wrong password page"]
+    F -->|no| B
+    P -->|no| G{"GET with a stored copy<br/>for this URL?"}
     G -->|yes| COPY["Stored copy,<br/>with the same bait as live pages"]
     G -->|no| B{"Stored copy<br/>for the bare path?"}
     B -->|yes| COPY
     B -->|no| NF["The app's own 404 page"]
 ```
 
-Kagami stores a response only if a shared HTTP cache could store it.
+Kagami stores a response only if a shared HTTP cache could store it. The one exception is the app's answer to a
+failed form post, such as its wrong password page, so a contained attacker's login looks like any other failed
+login. That answer is kept only after two anonymous submissions with different bodies received byte-identical
+responses, so it never repeats what a visitor typed, and Kagami keeps only a hash of each request body.
 
 - The request was a GET without a cookie or an `Authorization` header.
 - The response has no `Set-Cookie`, no `Cache-Control: private` or `no-store`, is at most 64 KiB, and has a

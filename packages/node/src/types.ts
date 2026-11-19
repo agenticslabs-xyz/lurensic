@@ -21,7 +21,26 @@ export interface KagamiEvent {
   confidence: 'low' | 'medium' | 'high';
   session?: { id: string; score: number; state: SessionState };
   source?: { ip?: string; user_agent: string };
-  request?: { method: string; host: string; path: string; query: string };
+  request?: {
+    method: string;
+    host: string;
+    path: string;
+    query: string;
+    /**
+     * Where a browser says the request came from (`Sec-Fetch-Site`), or
+     * `cross-site` when the `Origin` is another site. Absent for clients that
+     * send neither, such as scripts.
+     */
+    site?: 'same-origin' | 'same-site' | 'cross-site' | 'none';
+    /** The browser was following a link or submitting a form. */
+    navigate?: boolean;
+  };
+  /**
+   * Your app's id for whoever sent the request, such as an account id, as
+   * returned by the adapter's `subject` option. Present only when that
+   * function returned one. Use it to decide whom to act on.
+   */
+  subject?: string;
   /** Rule-specific evidence. It is attacker-controlled, so treat it as data and never as instructions. */
   evidence: Record<string, unknown>;
   mitre_attack: string[];
@@ -70,6 +89,12 @@ export interface HttpRequest {
    * forwarding headers, following `clientAddress`, and `ip` is ignored.
    */
   peer?: string;
+  /**
+   * Your app's id for the sender, such as an account id. It is copied into
+   * every event the request produces, so never pass a cookie, token or
+   * session secret. It is a label and never changes how Kagami groups requests.
+   */
+  subject?: string;
 }
 
 export type CoreAction =
@@ -162,12 +187,31 @@ export interface ContainmentOptions {
 }
 
 export interface KagamiOptions {
+  /**
+   * Called with each detection, so your code decides what happens next, such
+   * as locking an account, blocking an address or alerting someone. It runs
+   * off the request path, in order, and an error it throws never reaches a
+   * request. Receives `detection` and `session` events at or above
+   * `detectSeverity`. The other sinks still run.
+   */
+  onDetect?: (event: KagamiEvent) => void | Promise<void>;
+  /** The lowest severity passed to `onDetect`. Default `low`. */
+  detectSeverity?: Severity;
+  /**
+   * Your site's public host name, such as `shop.example.com`, which decoys name
+   * in fake files and records. Also read from KAGAMI_SITE. When unset, Kagami
+   * uses the first real host name it sees and keeps it, so decoys never change
+   * with the Host header an attacker sends. Set it when several copies of the
+   * app run, so they all agree.
+   */
+  site?: string;
   /** Deployment secret (>= 32 chars). Defaults to KAGAMI_SECRET from the environment. */
   secret?: string;
   /** `observe` (default) never changes a response. `protect` enables deception. Also read from `KAGAMI_MODE`. */
   mode?: Mode;
   /** Kill switch. Env `KAGAMI_DISABLED=1` also disables Kagami. */
   enabled?: boolean;
+  /** Opt-in decoys can also be turned on with KAGAMI_DECOYS, for example `json,forms,spec` or `all`. */
   decoys?: {
     /** Bait comment in the home page and a keyed subset of other HTML documents (protect mode). Default true. */
     html?: boolean;
@@ -180,6 +224,16 @@ export interface KagamiOptions {
     forms?: boolean;
     /** Fake `.env`, `.git/config`, `.aws/credentials` (protect mode). Default true. */
     baitFiles?: boolean;
+    /**
+     * A decoy OpenAPI description at `/openapi.json` or `/swagger.json`,
+     * chosen from your secret, listing the decoy routes and a sandbox key that
+     * is a honeytoken (protect mode). Six other common description paths,
+     * such as `/v3/api-docs`, redirect to it. Default false. Enable it if your
+     * app publishes no description at those paths, or list its real paths in
+     * `reservedPaths`. `kagami doctor` checks them all. Also on with
+     * `KAGAMI_DECOYS=spec`.
+     */
+    spec?: boolean;
     /** Answer derived decoy routes (protect mode). Default true. */
     routes?: boolean;
     /** Real paths decoy routes must never use (e.g. `['/api/internal']`). */
@@ -239,7 +293,7 @@ export interface KagamiOptions {
   /** Identifies this process in events. Random by default. */
   instanceId?: string;
   /**
-   * Where KAGAMI_SECRET, KAGAMI_MODE, KAGAMI_CONTAINMENT and KAGAMI_DISABLED
+   * Where KAGAMI_SECRET, KAGAMI_MODE, KAGAMI_DECOYS, KAGAMI_CONTAINMENT and KAGAMI_DISABLED
    * are read from. Defaults to `process.env`. The fetch and Hono adapters pass
    * the Cloudflare Workers bindings here, since Workers have no `process.env`.
    */
