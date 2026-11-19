@@ -415,14 +415,3 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `maxBodyBytes` | 16384 | |
 | `maxEventsPerMinute` | 600 | |
 | `maxSessions` | 50000 | |
-
-## 12. Roadmap
-
-1. More tripwires on actions every AI attack harness takes, each judged by a live benchmark round. Candidates are a decoy in GraphQL introspection and a decoy API path in JavaScript bundles.
-2. Detection and deception on hosts that do not pass the visitor address. This needs a visitor key in the core, because sessions and machines are keyed on the address today.
-3. **Utsusemi.** A richer shadow that also answers personalised routes for contained machines with consistent fake data.
-4. Live tests on Render, Cloudflare Workers, AWS Lambda, Vercel and Netlify, and presets for hosts that pass the visitor address in their own way. Next.js is not planned, because its middleware cannot see responses. Static sites are out of scope, because they have no server to protect.
-5. More adapters (Fastify, FastAPI, Django, Go) when people ask for them, with a shared conformance vector suite.
-6. Off-site honeytoken monitoring (cloud canary credentials).
-7. A decoy route collision check and config lint in `kagami doctor`, and a local dashboard.
-8. A public evasion challenge with live statistics.

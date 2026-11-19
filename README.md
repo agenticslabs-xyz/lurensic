@@ -283,14 +283,6 @@ pnpm test              # engine tests, WebAssembly build and all JS suites
 pnpm demo              # demo shop on http://localhost:41837 in protect mode
 ```
 
-## Roadmap
-
-- More tripwires on actions every AI attack harness takes, judged by live benchmark rounds, such as decoys for GraphQL introspection and for API paths harvested from JavaScript bundles
-- A live round on the planted-bug target, and a round with an attack agent built by someone else
-- **Utsusemi**, a richer decoy layer that also answers personalised routes with consistent fake data
-- Detection on hosts that do not pass the visitor address
-- A public **"evade Kagami"** challenge with a live scoreboard
-
 ## Responsible use
 
 Kagami is purely defensive. It detects, misleads and records, and it never attacks back. It does no
