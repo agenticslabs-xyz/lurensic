@@ -30,15 +30,31 @@ mode, which is expected.
 | `client_address` | WARN | Kagami saw your requests as coming from a private address. You are behind a proxy that Kagami does not know about. See [Behind a proxy or CDN](behind-a-proxy.md). |
 | `blocklist` | WARN | The file is not a JSON blocklist. The doctor only checks `blocklistFile({ format: 'json' })` files. |
 
+## The startup line
+
+When Kagami starts it logs one line, such as the following.
+
+```
+[kagami] Kagami 0.1.0 (build f4cf99f44aba) started in protect mode. Visitor addresses use the render preset, because RENDER=true. Containment is on and answers with block.
+```
+
+The build id changes whenever the engine or the runtime changes, even when the version number does not. After a
+deploy, check that it is the build you expect. If it is not, the host reused an old install, for example from a build
+cache. Install with `npm ci`, or clear the host's build cache. The line goes to `console.info`, or to `logger.info`
+when you pass a `logger`. A `logger` without `info` turns it off. With Hono and `kagami(app)`, Kagami starts on the
+first request, so the line appears then. A health check usually sends one straight after a deploy.
+
 ## Common problems
+
+**Every visitor has the same address in events.** Look at the startup line. If it says no address setting is in use,
+Kagami is behind a proxy it does not know about. Set `KAGAMI_PROXY` or `clientAddress`, see
+[Behind a proxy or CDN](behind-a-proxy.md).
 
 **No events at all.** Kagami is mounted after the route that answered, or the sink filters by severity.
 `consoleSink()` shows `low` and above by default. Mount Kagami before your routes and static file middleware.
 
 **Bodies are not inspected.** Kagami is mounted before the body parsers. Mount it after `express.json()` and
 `express.urlencoded()`.
-
-**Every visitor has the same address in events.** The app is behind a proxy. Set `clientAddress`.
 
 **"The client address is unknown on this runtime".** The fetch or Hono adapter could not find the visitor's address,
 so Kagami lets requests through untouched. This happens on hosts such as Vercel and Netlify, whose runtime does not

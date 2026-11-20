@@ -77,7 +77,9 @@ The full walkthrough is in [Getting started](getting-started.md).
 ## Render
 
 Use a Render **Web Service** running Node, with Express or Hono as above. A Render static site cannot run Kagami,
-because no server code runs there.
+because no server code runs there. Use `npm ci` as the build command. Render keeps a build cache, and `npm install`
+over it can keep an older Kagami. The [startup line](troubleshooting.md#the-startup-line) in the logs shows which
+build is running.
 
 **The visitor's address.** Nothing is needed. Render sets `RENDER=true` on every service, and Kagami then uses its
 Render setting by itself, with or without your own Cloudflare in front.

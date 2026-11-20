@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import { escapeSlack, formatSlack, Kagami, memorySink, verifyChain, webhookSink } from '../dist/index.js';
+import { BUILD_ID, escapeSlack, formatSlack, Kagami, memorySink, PACKAGE_VERSION, verifyChain, webhookSink } from '../dist/index.js';
 
 const SECRET = 'node-test-secret-0123456789abcdef-0123456789';
 const quiet = { warn() {} };
@@ -218,4 +218,27 @@ test('after an engine trap the rebuilt engine keeps every containment and starts
   assert.notEqual(started[0].instance, started[1].instance);
   assert.equal(new Set(mem.events.map((e) => e.id)).size, mem.events.length, 'event ids never repeat');
   assert.equal((await verifyChain(mem.lines)).ok, true);
+});
+
+test('Kagami logs one startup line with its version, build and setup', async () => {
+  const lines = [];
+  const logger = { warn() {}, info: (m) => lines.push(m) };
+  const k = new Kagami({ secret: SECRET, mode: 'protect', containment: { action: 'block' }, env: { RENDER: 'true' }, sinks: [], logger });
+  await k.close();
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(PACKAGE_VERSION, /^\d+\.\d+\.\d+/);
+  assert.match(BUILD_ID, /^[0-9a-f]{12}$/);
+  assert.ok(lines[0].includes(`Kagami ${PACKAGE_VERSION} (build ${BUILD_ID}) started in protect mode.`), lines[0]);
+  assert.ok(lines[0].includes('the render preset, because RENDER=true'), lines[0]);
+  assert.ok(lines[0].includes('Containment is on and answers with block.'), lines[0]);
+
+  const none = [];
+  const off = new Kagami({ secret: SECRET, env: {}, sinks: [], logger: { warn() {}, info: (m) => none.push(m) } });
+  await off.close();
+  assert.ok(none[0].includes('started in observe mode. No address setting is in use'), none[0]);
+  assert.ok(none[0].includes('Containment is off.'), none[0]);
+
+  // A custom logger without info stays quiet.
+  const silent = new Kagami({ secret: SECRET, env: {}, sinks: [], logger: quiet });
+  await silent.close();
 });
