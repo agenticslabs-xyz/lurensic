@@ -68,7 +68,7 @@ type Next = (request: Request) => Promise<Response>;
 const MAX_DECORATE = 1024 * 1024;
 /** The largest body kept for the shadow, as in the Express adapter. */
 const MAX_CAPTURE = 64 * 1024;
-const ENV_KEYS = ['KAGAMI_SECRET', 'KAGAMI_MODE', 'KAGAMI_DECOYS', 'KAGAMI_SITE', 'KAGAMI_CONTAINMENT', 'KAGAMI_DISABLED', 'NODE_ENV'] as const;
+const ENV_KEYS = ['KAGAMI_SECRET', 'KAGAMI_MODE', 'KAGAMI_DECOYS', 'KAGAMI_SITE', 'KAGAMI_CONTAINMENT', 'KAGAMI_PROXY', 'KAGAMI_DISABLED', 'NODE_ENV', 'RENDER'] as const;
 const decoder = new TextDecoder();
 const contexts = new WeakMap<Request, KagamiContext>();
 
@@ -199,13 +199,18 @@ function sampleHeaders(headers: Headers): Array<[string, string]> {
  */
 export class FetchGuard {
   private engine: Kagami | undefined;
-  private readonly resolveInCore: boolean;
 
   constructor(private readonly options: FetchAdapterOptions = {}) {
     this.engine = options.instance;
-    // With `clientAddress`, the core resolves the client address from the
-    // peer and the headers. A custom `clientIp` function takes precedence.
-    this.resolveInCore = !options.clientIp && Boolean(options.clientAddress);
+  }
+
+  /**
+   * With `clientAddress`, `KAGAMI_PROXY` or the automatic Render setting,
+   * the core resolves the client address from the peer and the headers. A
+   * custom `clientIp` function takes precedence.
+   */
+  private get resolveInCore(): boolean {
+    return !this.options.clientIp && (this.engine?.resolvesClientAddress ?? false);
   }
 
   /**

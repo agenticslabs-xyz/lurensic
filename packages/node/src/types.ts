@@ -1,3 +1,5 @@
+import type { ClientAddressPreset, ClientAddressSetting } from './address.js';
+
 export type Mode = 'observe' | 'protect';
 export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 export type SessionState = 'clean' | 'suspicious' | 'flagged';
@@ -252,15 +254,12 @@ export interface KagamiOptions {
    * `cloudflare`, `CF-Connecting-IP` only from Cloudflare's published ranges.
    * Adapters then pass `peer`. This matters for containment, because a
    * trusted forged header would let an attacker get an innocent address blocked.
+   *
+   * Use a preset name (`'cloudflare'`, `'render'` or `'none'`) or write the
+   * setting out. Without this option Kagami reads `KAGAMI_PROXY`, and on
+   * Render, where `RENDER=true`, it uses the Render preset by itself.
    */
-  clientAddress?: {
-    /** Addresses or CIDR ranges of your own proxies in front of the app, such as `127.0.0.1` for nginx on the same host. */
-    trustedProxies?: string[];
-    /** The app is behind Cloudflare. */
-    cloudflare?: boolean;
-    /** Replaces the built-in Cloudflare ranges. */
-    cloudflareRanges?: string[];
-  };
+  clientAddress?: ClientAddressPreset | ClientAddressSetting;
   /** How client IPs appear in events. Default `raw`. */
   ipLogging?: 'raw' | 'hashed' | 'omit';
   /** Where events go. The default writes JSON lines to stdout for `low` and above. */

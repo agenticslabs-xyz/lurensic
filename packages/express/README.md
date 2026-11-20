@@ -33,7 +33,7 @@ JSON lines. `subject` runs again when the response finishes, so ids your routes 
 - **Sealed IDs.** `req.kagami.seal(id)` and `req.kagami.verify(sealed)` turn IDOR attempts into alerts.
 - **Decoys.** With `mode: 'protect'`, probes for secrets get fake files whose credentials are honeytokens, and `decoys: { json: true, forms: true }` adds a decoy field that only a mass-assignment attempt changes. `decoys: { spec: true }` serves a decoy API description whose every operation is a decoy. `KAGAMI_DECOYS=json,forms,spec` does the same from the environment.
 
-Behind a proxy or Cloudflare, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Kagami then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. See [Choose your setup](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/choose-your-setup.md) for every path.
+On Render nothing is needed, because Kagami detects Render. With Cloudflare in front, set `KAGAMI_PROXY=cloudflare`. Behind your own proxy, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Kagami then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. See [Choose your setup](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/choose-your-setup.md) for every path.
 
 Kagami can also cut attacking machines off by itself. That is optional and off by default. See [Containment](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/containment.md).
 

@@ -22,11 +22,23 @@ trusted proxies. If it stops at a Cloudflare edge address and `cloudflare` is on
 | Setup | Setting |
 |---|---|
 | The app is directly on the internet | Nothing. Leave `clientAddress` out. |
+| Render, with or without your own Cloudflare | Nothing. Kagami sees `RENDER=true` and uses the `render` preset by itself. See [Render](choose-your-setup.md#render) |
+| Cloudflare directly in front of the app | `KAGAMI_PROXY=cloudflare`, or `clientAddress: 'cloudflare'` |
 | nginx or another proxy on the same host | `clientAddress: { trustedProxies: ['127.0.0.1', '::1'] }` |
 | A load balancer on a private network | `clientAddress: { trustedProxies: ['10.0.0.0/8'] }` (its addresses) |
-| Cloudflare directly in front of the app | `clientAddress: { cloudflare: true }` |
 | Cloudflare, then your own proxy | `clientAddress: { cloudflare: true, trustedProxies: ['127.0.0.1'] }` |
-| Render, with or without your own Cloudflare | `clientAddress: { cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] }`. Render's edge is Cloudflare, and its load balancer reaches the app over loopback. See [Render](choose-your-setup.md#render) |
+
+**Presets.** A preset names a setup we have checked on a live host, so you do not write the proxy list out. Pass it as
+`clientAddress: 'cloudflare'` or set it as `KAGAMI_PROXY=cloudflare` without touching code. The option wins over the
+variable.
+
+| Preset | The same as | For |
+|---|---|---|
+| `cloudflare` | `{ cloudflare: true }` | Cloudflare connects to the app directly |
+| `render` | `{ cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] }` | A Render web service. Render's edge is Cloudflare, and its load balancer reaches the app over loopback |
+| `none` | No forwarding headers trusted | Turns off the automatic Render setting |
+
+An unknown preset name trusts no headers and logs a warning.
 
 Your proxy must append the address it received the connection from to `X-Forwarded-For`. nginx does this with
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`.
@@ -61,7 +73,7 @@ warning, instead of treating every visitor as one machine.
 
 ## Other options
 
-Express's own `app.set('trust proxy', ...)` also works, because Kagami uses `req.ip` when `clientAddress` is not set.
+Express's own `app.set('trust proxy', ...)` also works, because Kagami uses `req.ip` when no `clientAddress`, `KAGAMI_PROXY` or Render setting applies.
 `clientAddress` is preferred because it behaves the same in every language Kagami supports and understands
 Cloudflare. A custom function, `clientIp: (req) => ...`, overrides both.
 
