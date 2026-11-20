@@ -36,14 +36,16 @@ export interface ResolvedClientAddress {
   setting?: ClientAddressSetting;
   /** Where it came from, for messages. */
   from: 'option' | 'KAGAMI_PROXY' | 'RENDER' | 'none';
+  /** The preset used, when one was. */
+  preset?: string;
 }
 
 function preset(name: string, warn: (m: string) => void, from: ResolvedClientAddress['from']): ResolvedClientAddress {
   const key = name.trim().toLowerCase();
-  if (key === 'none') return { from: 'none' };
+  if (key === 'none') return { from, preset: 'none' };
   if (key in CLIENT_ADDRESS_PRESETS) {
     const p = CLIENT_ADDRESS_PRESETS[key as keyof typeof CLIENT_ADDRESS_PRESETS];
-    return { setting: { ...p, ...(p.trustedProxies && { trustedProxies: [...p.trustedProxies] }) }, from };
+    return { setting: { ...p, ...(p.trustedProxies && { trustedProxies: [...p.trustedProxies] }) }, from, preset: key };
   }
   warn(
     `[kagami] "${name}" is not a client address preset, so no forwarding headers are trusted. ` +
@@ -68,4 +70,13 @@ export function resolveClientAddress(
   if (typeof named === 'string' && named.trim() !== '') return preset(named, warn, 'KAGAMI_PROXY');
   if (env.RENDER === 'true') return preset('render', warn, 'RENDER');
   return { from: 'none' };
+}
+
+/** One sentence on where the visitor's address comes from, for the startup line. */
+export function describeClientAddress(r: ResolvedClientAddress): string {
+  if (r.preset === 'none') return `Visitor addresses come from the connection, because ${r.from === 'option' ? 'clientAddress' : r.from} is none.`;
+  if (!r.setting) return 'No address setting is in use, so visitor addresses come from the framework or the connection.';
+  if (r.from === 'RENDER') return 'Visitor addresses use the render preset, because RENDER=true.';
+  if (r.from === 'KAGAMI_PROXY') return `Visitor addresses use the ${r.preset} preset from KAGAMI_PROXY.`;
+  return r.preset ? `Visitor addresses use the ${r.preset} preset.` : 'Visitor addresses use the clientAddress setting.';
 }

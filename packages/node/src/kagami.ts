@@ -8,7 +8,8 @@
  */
 import { Core, KagamiCoreError } from './core.js';
 import { EnforcerPipeline } from './enforce.js';
-import { resolveClientAddress } from './address.js';
+import { describeClientAddress, resolveClientAddress } from './address.js';
+import { BUILD_ID, PACKAGE_VERSION } from './build-info.js';
 import { processEnv, hasProcess, randomHex, type Env } from './platform.js';
 import { consoleSink, detectSink, Pipeline } from './sinks.js';
 import { parseStored, storeDriver, storeEnforcer, storeKey, withTimeout, type StoreDriver } from './store.js';
@@ -254,6 +255,20 @@ export class Kagami {
     this.coreConfig = buildCoreConfig(options, secret, this.mode);
     try {
       this.boot();
+      // One line at startup, so a deployment's logs show which build runs
+      // and how it is set up. A custom logger without `info` stays quiet.
+      const info = options.logger ? options.logger.info?.bind(options.logger) : console.info;
+      const containment = options.containment
+        ? `Containment is on and answers with ${(options.containment === true ? undefined : options.containment.action) ?? 'shadow'}.`
+        : 'Containment is off.';
+      try {
+        info?.(
+          `[kagami] Kagami ${PACKAGE_VERSION} (build ${BUILD_ID}) started in ${this.mode} mode. ` +
+            `${describeClientAddress(address)} ${containment}`,
+        );
+      } catch {
+        /* never throw from logging */
+      }
     } catch (err) {
       this.enabled = false;
       const msg = err instanceof KagamiCoreError ? err.message : String(err);

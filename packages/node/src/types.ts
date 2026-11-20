@@ -297,8 +297,8 @@ export interface KagamiOptions {
    * the Cloudflare Workers bindings here, since Workers have no `process.env`.
    */
   env?: Record<string, string | undefined>;
-  /** Where Kagami reports its own problems. Defaults to `console`. */
-  logger?: { warn(message: string): void };
+  /** Where Kagami reports its own problems, and with `info`, one line at startup. Defaults to `console`. */
+  logger?: { warn(message: string): void; info?(message: string): void };
 }
 
 export interface KagamiStats {
