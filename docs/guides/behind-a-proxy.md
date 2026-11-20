@@ -26,6 +26,7 @@ trusted proxies. If it stops at a Cloudflare edge address and `cloudflare` is on
 | A load balancer on a private network | `clientAddress: { trustedProxies: ['10.0.0.0/8'] }` (its addresses) |
 | Cloudflare directly in front of the app | `clientAddress: { cloudflare: true }` |
 | Cloudflare, then your own proxy | `clientAddress: { cloudflare: true, trustedProxies: ['127.0.0.1'] }` |
+| Render, with or without your own Cloudflare | `clientAddress: { cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] }`. Render's edge is Cloudflare, and its load balancer reaches the app over loopback. See [Render](choose-your-setup.md#render) |
 
 Your proxy must append the address it received the connection from to `X-Forwarded-For`. nginx does this with
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`.

@@ -102,7 +102,9 @@ Lambda, so the table above applies the same way. On Vercel and Netlify the runti
 as shown in [Choose your setup](../guides/choose-your-setup.md#aws-lambda-vercel-and-netlify-functions). If Kagami logs
 "The client address is unknown on this runtime", this step is missing.
 
-Do not guess an address setting for Render. It is still being verified. Tell the owner, and point them at the doctor.
+On Render, use `clientAddress: { cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] }`, with or
+without the owner's own Cloudflare in front. Render's edge is Cloudflare and its load balancer reaches the app over
+loopback, so without this every visitor looks like `::1`.
 
 ## Step 5. Act on detections and keep the events
 

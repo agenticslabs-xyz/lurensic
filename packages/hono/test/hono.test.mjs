@@ -130,3 +130,25 @@ test('on Workers, settings come from the bindings and background work goes to wa
   assert.match(await res.text(), /^NODE_ENV=production$/m);
   assert.equal(waited, 1);
 });
+
+test('on Render behind Cloudflare the visitor address is the one Cloudflare saw, and forged headers do not change it', async () => {
+  // Headers recorded from a real Render service, through a custom domain on
+  // Cloudflare and through the onrender.com address. Render's own edge is
+  // Cloudflare, and its proxy reaches the app over loopback.
+  const clientAddress = { cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] };
+  const cases = [
+    ['custom domain', '198.51.100.23,198.51.100.23, 162.159.114.45, 10.30.197.182', '198.51.100.23', '198.51.100.23'],
+    ['onrender.com', '198.51.100.23, 162.159.114.84, 10.24.84.0', '198.51.100.23', '198.51.100.23'],
+    ['forged X-Forwarded-For', '9.9.9.9, 203.0.113.50, 162.159.114.84, 10.24.84.0', '203.0.113.50', '203.0.113.50'],
+    ['forged CF-Connecting-IP without Cloudflare', '9.9.9.9, 203.0.113.77, 10.24.84.0', '9.9.9.9', '203.0.113.77'],
+  ];
+  for (const [name, xff, cf, want] of cases) {
+    const mem = memorySink();
+    const mw = kagami({ secret: SECRET, mode: 'protect', clientAddress, sinks: [mem], logger: quiet });
+    const app = buildApp(mw);
+    await app.request('/.env', { headers: { 'x-forwarded-for': xff, 'cf-connecting-ip': cf } }, { incoming: { socket: { remoteAddress: '::1' } } });
+    await mw.kagami.flush();
+    const ips = [...new Set(mem.events.filter((e) => e.kind !== 'system').map((e) => e.source?.ip))];
+    assert.deepEqual(ips, [want], name);
+  }
+});
