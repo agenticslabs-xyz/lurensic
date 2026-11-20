@@ -130,3 +130,45 @@ test('on Workers, settings come from the bindings and background work goes to wa
   assert.match(await res.text(), /^NODE_ENV=production$/m);
   assert.equal(waited, 1);
 });
+// Headers recorded from a real Render service, through a custom domain on
+// Cloudflare and through the onrender.com address. Render's own edge is
+// Cloudflare, and its proxy reaches the app over loopback.
+const RENDER_CASES = [
+  ['custom domain', '198.51.100.23,198.51.100.23, 162.159.114.45, 10.30.197.182', '198.51.100.23', '198.51.100.23'],
+  ['onrender.com', '198.51.100.23, 162.159.114.84, 10.24.84.0', '198.51.100.23', '198.51.100.23'],
+  ['forged X-Forwarded-For', '9.9.9.9, 203.0.113.50, 162.159.114.84, 10.24.84.0', '203.0.113.50', '203.0.113.50'],
+  ['forged CF-Connecting-IP without Cloudflare', '9.9.9.9, 203.0.113.77, 10.24.84.0', '9.9.9.9', '203.0.113.77'],
+];
+
+async function addressSeen(options, xff, cf) {
+  const mem = memorySink();
+  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [mem], logger: quiet, ...options });
+  const app = buildApp(mw);
+  await app.request('/.env', { headers: { 'x-forwarded-for': xff, 'cf-connecting-ip': cf } }, { incoming: { socket: { remoteAddress: '::1' } } });
+  await mw.kagami.flush();
+  return [...new Set(mem.events.filter((e) => e.kind !== 'system').map((e) => e.source?.ip))];
+}
+
+test('on Render behind Cloudflare the visitor address is the one Cloudflare saw, and forged headers do not change it', async () => {
+  const setups = {
+    'written out': { clientAddress: { cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] }, env: {} },
+    'the render preset': { clientAddress: 'render', env: {} },
+    'KAGAMI_PROXY=render': { env: { KAGAMI_PROXY: 'render' } },
+    'RENDER=true, set by Render itself': { env: { RENDER: 'true' } },
+  };
+  for (const [setup, options] of Object.entries(setups)) {
+    for (const [name, xff, cf, want] of RENDER_CASES) {
+      assert.deepEqual(await addressSeen(options, xff, cf), [want], `${setup}, ${name}`);
+    }
+  }
+});
+
+test('KAGAMI_PROXY=none turns off the automatic Render setting, and an unknown preset trusts no headers', async () => {
+  const [, xff, cf] = RENDER_CASES[0];
+  assert.deepEqual(await addressSeen({ env: { RENDER: 'true', KAGAMI_PROXY: 'none' } }, xff, cf), ['::1']);
+  assert.deepEqual(await addressSeen({ env: {} }, xff, cf), ['::1'], 'nothing is trusted by default');
+  const warnings = [];
+  const mw = kagami({ secret: SECRET, clientAddress: 'rendr', sinks: [], logger: { warn: (m) => warnings.push(m) } });
+  await buildApp(mw).request('/', {}, { incoming: { socket: { remoteAddress: '::1' } } });
+  assert.ok(warnings.some((m) => m.includes('"rendr" is not a client address preset')), warnings.join('\n'));
+});

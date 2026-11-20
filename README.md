@@ -124,6 +124,9 @@ app.use(kagami({
 }));
 ```
 
+Behind Cloudflare, add `KAGAMI_PROXY=cloudflare` so Kagami sees each visitor's real address. On Render nothing is
+needed, because Kagami detects Render. Other proxies are in [Behind a proxy or CDN](docs/guides/behind-a-proxy.md).
+
 On Hono the line is the same, `app.use(kagami({ onDetect }))` from `@agenticslabs/kagami-hono`. On Cloudflare
 Workers, Bun or Deno without a framework, it is `export default kagami(app, { onDetect })` from
 `@agenticslabs/kagami`. There, `subject` receives the raw `Request`, so look up the account id from your own verified session. Never return a cookie, token or session secret, because the value is written to the logs.

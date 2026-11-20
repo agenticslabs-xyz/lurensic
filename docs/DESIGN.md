@@ -404,7 +404,7 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `tarpit` | `false` | `true` or `{ minMs, maxMs }` |
 | `thresholds` | `{ suspicious: 30, flagged: 70 }` | |
 | `ignorePaths` | `[]` | Paths skipped entirely, such as health checks and static assets |
-| `clientAddress` | none | `{ trustedProxies, cloudflare, cloudflareRanges }`. The core resolves the client address from the peer and trusted headers. See [Behind a proxy or CDN](guides/behind-a-proxy.md). |
+| `clientAddress` | `KAGAMI_PROXY`, else `render` when `RENDER=true`, else none | A preset (`cloudflare`, `render` or `none`) or `{ trustedProxies, cloudflare, cloudflareRanges }`. The core resolves the client address from the peer and trusted headers. See [Behind a proxy or CDN](guides/behind-a-proxy.md). |
 | `ipLogging` | `raw` | `raw`, `hashed` (keyed per deployment) or `omit` |
 | `sinks` | `[consoleSink()]` | |
 | `containment` | `KAGAMI_CONTAINMENT` or off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |

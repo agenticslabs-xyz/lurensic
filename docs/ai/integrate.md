@@ -92,7 +92,8 @@ Ask the owner how traffic reaches the app, then set exactly one of these.
 | Directly from the internet | nothing |
 | Through nginx or a proxy on the same host | `clientAddress: { trustedProxies: ['127.0.0.1', '::1'] }` |
 | Through a load balancer | `clientAddress: { trustedProxies: ['<the load balancer address ranges>'] }` |
-| Through Cloudflare | `clientAddress: { cloudflare: true }` |
+| Through Cloudflare | `clientAddress: 'cloudflare'`, or `KAGAMI_PROXY=cloudflare` in the environment |
+| On Render | nothing, Kagami detects Render |
 | Through Cloudflare and then a local proxy | `clientAddress: { cloudflare: true, trustedProxies: ['127.0.0.1', '::1'] }` |
 
 Never use `app.set('trust proxy', true)` for this.
@@ -102,7 +103,9 @@ Lambda, so the table above applies the same way. On Vercel and Netlify the runti
 as shown in [Choose your setup](../guides/choose-your-setup.md#aws-lambda-vercel-and-netlify-functions). If Kagami logs
 "The client address is unknown on this runtime", this step is missing.
 
-Do not guess an address setting for Render. It is still being verified. Tell the owner, and point them at the doctor.
+On Render, set nothing. Render sets `RENDER=true`, and Kagami then uses its `render` preset by itself, with or without
+the owner's own Cloudflare in front. Do not add a `clientAddress` there unless the owner asks, because it replaces the
+preset.
 
 ## Step 5. Act on detections and keep the events
 

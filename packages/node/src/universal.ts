@@ -11,6 +11,7 @@ export { callbackEnforcer, formatBlocklist, webhookEnforcer, type BlocklistForma
 export { FetchGuard, kagami, kagamiContext, peerAddress, subjectOf, type FetchAdapterOptions, type GuardedApp, type KagamiContext } from './fetch.js';
 export { storeDriver, STORE_HELP, type StoreDriver } from './store.js';
 export { SEVERITY_RANK } from './types.js';
+export { CLIENT_ADDRESS_PRESETS, resolveClientAddress, type ClientAddressPreset, type ClientAddressSetting } from './address.js';
 export type {
   ContainedMachine,
   ContainmentOptions,

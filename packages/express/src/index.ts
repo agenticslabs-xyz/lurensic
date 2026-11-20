@@ -172,9 +172,10 @@ function bodyError(err: unknown): { type: string; body: string } | null {
  */
 export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
   const k = options.instance ?? new Kagami(options);
-  // With `clientAddress`, the core resolves the client address from the raw
-  // peer and the headers. A custom `clientIp` function takes precedence.
-  const resolveInCore = !options.clientIp && Boolean(options.clientAddress);
+  // With `clientAddress`, `KAGAMI_PROXY` or the automatic Render setting,
+  // the core resolves the client address from the raw peer and the headers.
+  // A custom `clientIp` function takes precedence.
+  const resolveInCore = !options.clientIp && k.resolvesClientAddress;
 
   /** Attach the verdict to the request and apply its action. Returns true if Kagami answered. */
   const apply = (req: Request, res: Response, info: HttpRequest, verdict: Verdict, decorate: boolean): boolean => {

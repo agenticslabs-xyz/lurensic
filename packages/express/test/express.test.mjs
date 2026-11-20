@@ -336,6 +336,31 @@ test('clientAddress lets the core resolve the client address and ignores forged 
   }
 });
 
+test('on Render, Kagami uses the Render setting by itself, and KAGAMI_PROXY names a preset', async () => {
+  // Headers as recorded on a live Render service. Render's edge is Cloudflare
+  // and its proxy reaches the app over loopback.
+  const headers = { 'x-forwarded-for': '198.51.100.23, 162.159.114.84, 10.24.84.0', 'cf-connecting-ip': '198.51.100.23' };
+  const cases = [
+    [{ env: { RENDER: 'true' } }, '198.51.100.23'],
+    [{ env: { KAGAMI_PROXY: 'render' } }, '198.51.100.23'],
+    [{ env: {}, clientAddress: 'render' }, '198.51.100.23'],
+    [{ env: { RENDER: 'true', KAGAMI_PROXY: 'none' } }, '127.0.0.1'],
+    [{ env: {} }, '127.0.0.1'],
+  ];
+  for (const [options, expected] of cases) {
+    const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet, ...options });
+    const server = await listen(buildApp(mw));
+    try {
+      const field = mw.kagami.manifest().decoys.json_field;
+      await fetchRaw(server.base, `/api/me?${field}=admin`, { headers });
+      assert.deepEqual(mw.kagami.contained().map((m) => m.target), [expected], JSON.stringify(options));
+    } finally {
+      await server.close();
+      await mw.kagami.close();
+    }
+  }
+});
+
 // The optional shared store. Two app instances share one store.
 test('with a store, a machine contained by one instance is blocked by another', async () => {
   const map = new Map();

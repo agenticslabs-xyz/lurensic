@@ -8,6 +8,7 @@
  */
 import { Core, KagamiCoreError } from './core.js';
 import { EnforcerPipeline } from './enforce.js';
+import { resolveClientAddress } from './address.js';
 import { processEnv, hasProcess, randomHex, type Env } from './platform.js';
 import { consoleSink, detectSink, Pipeline } from './sinks.js';
 import { parseStored, storeDriver, storeEnforcer, storeKey, withTimeout, type StoreDriver } from './store.js';
@@ -128,7 +129,8 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
   if (o.thresholds) cfg.thresholds = { ...(o.thresholds.suspicious !== undefined && { suspicious: o.thresholds.suspicious }), ...(o.thresholds.flagged !== undefined && { flagged: o.thresholds.flagged }) };
   if (o.ignorePaths) cfg.ignore_paths = o.ignorePaths;
   if (o.ipLogging) cfg.ip_logging = o.ipLogging;
-  if (o.clientAddress) {
+  // By now a preset name has been turned into its setting.
+  if (o.clientAddress && typeof o.clientAddress === 'object') {
     const c = o.clientAddress;
     cfg.client_ip = {
       ...(c.trustedProxies && { trusted_proxies: c.trustedProxies }),
@@ -156,6 +158,12 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
 export class Kagami {
   readonly mode: Mode;
   readonly maxBodyBytes: number;
+  /**
+   * True when Kagami works out the visitor's address itself, from the
+   * `clientAddress` option, `KAGAMI_PROXY` or the automatic Render setting.
+   * Adapters then pass the connection's address as `peer`.
+   */
+  readonly resolvesClientAddress: boolean;
   private core: Core | null = null;
   private enabled: boolean;
   private deploymentId: string | null = null;
@@ -198,13 +206,16 @@ export class Kagami {
     if (typeof options.onDetect === 'function') sinks.push(detectSink(options.onDetect, options.detectSeverity));
     this.pipeline = new Pipeline(sinks, this.warn);
     this.enabled = options.enabled !== false && !envFlag(env, 'KAGAMI_DISABLED');
-    // Containment can be switched on from the environment as well, so a
-    // deployment can be configured without code changes.
+    // Containment, decoys, the site and the address setting can come from the
+    // environment as well, so a deployment can be configured without code changes.
+    const address = resolveClientAddress(options.clientAddress, env, this.warn);
+    this.resolvesClientAddress = address.setting !== undefined;
     options = {
       ...options,
       containment: options.containment ?? envContainment(env),
       decoys: { ...envDecoys(env), ...options.decoys },
       site: options.site ?? env.KAGAMI_SITE,
+      clientAddress: address.setting,
     };
     if (options.store !== undefined && options.store !== null) {
       try {

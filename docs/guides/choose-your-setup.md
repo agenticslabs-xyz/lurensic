@@ -23,7 +23,7 @@ Start in observe mode, which never changes a response, and switch to protect mod
 | Your app | Install | Add | Containment memory | Tested |
 |---|---|---|---|---|
 | [Express on a server](#express-on-a-server) (VPS, Docker, Railway, Fly.io) | `@agenticslabs/kagami-express` | `app.use(kagami())` | The server's memory | Yes |
-| [Render](#render) | `@agenticslabs/kagami-express` or `@agenticslabs/kagami-hono` | `app.use(kagami())` | The server's memory, lost when the service sleeps | Locally. Render's address handling is being verified |
+| [Render](#render) | `@agenticslabs/kagami-express` or `@agenticslabs/kagami-hono` | `app.use(kagami())` | The server's memory, lost when the service sleeps | Yes, on a live Render service with Hono, through its own address and a custom domain on Cloudflare |
 | [Hono on Node, Bun or Deno](#hono-on-node-bun-or-deno) | `@agenticslabs/kagami-hono` | `app.use(kagami())` | The server's memory | Yes, with real servers on all three |
 | [Any `fetch` app on Bun or Deno](#any-fetch-app-on-bun-or-deno) | `@agenticslabs/kagami` | `export default kagami(app)` | The server's memory | Yes |
 | [Cloudflare Workers](#cloudflare-workers) | `@agenticslabs/kagami-hono` or `@agenticslabs/kagami` | `app.use(kagami())` or `export default kagami(app)` | Each copy of the Worker. A KV store makes it shared | In `wrangler dev`. A live deploy test is next |
@@ -37,6 +37,7 @@ Start in observe mode, which never changes a response, and switch to protect mod
 | `KAGAMI_SECRET` | Required in production. A random value you generate once with `npx @agenticslabs/kagami secret`. Every decoy is derived from it, so all copies of your app must share it. It is not an account or an API key. |
 | `KAGAMI_MODE` | `observe` (the default) or `protect` |
 | `KAGAMI_SITE` | Your site's public host name, such as `shop.example.com`, which decoys name. Optional. Kagami otherwise keeps the first real host name it sees. Set it when several copies of the app run |
+| `KAGAMI_PROXY` | What sits in front of the app, as a preset. `cloudflare` when Cloudflare connects to the app directly, `render` on Render (used by itself there), or `none`. Other setups use the `clientAddress` option, see [Behind a proxy or CDN](behind-a-proxy.md) |
 | `KAGAMI_DECOYS` | The optional decoys, as a list of `json`, `forms` and `spec`, or `all`. Off by default. Run the doctor before turning them on |
 | `KAGAMI_CONTAINMENT` | `on` (the shadow), `block` (a `403`), or unset for off |
 | `KAGAMI_DISABLED` | `1` switches Kagami off completely |
@@ -78,10 +79,18 @@ The full walkthrough is in [Getting started](getting-started.md).
 Use a Render **Web Service** running Node, with Express or Hono as above. A Render static site cannot run Kagami,
 because no server code runs there.
 
-**The visitor's address.** Render puts its own proxy in front of your service, and Cloudflare may sit in front of that.
-We are verifying exactly how Render passes the visitor's address before publishing a Render setting. Until then, deploy
-the [test app](../../examples/hono-app) with `ECHO_PATH` set and look at what your service receives, or run
-`npx @agenticslabs/kagami doctor --url https://your-service.example`.
+**The visitor's address.** Nothing is needed. Render sets `RENDER=true` on every service, and Kagami then uses its
+Render setting by itself, with or without your own Cloudflare in front.
+
+Render's own edge is Cloudflare. Every request then passes Render's load balancer on a private `10.x` address and
+reaches your app over loopback, so without the Render setting every visitor would look like `::1` and one attacker could
+get everyone contained. With it, Kagami takes the address Cloudflare saw. A visitor who sends their own
+`X-Forwarded-For` or `CF-Connecting-IP` cannot change it, and that holds for requests to the `onrender.com` address too,
+because Render's Cloudflare edge handles those as well. Express and Hono both get it.
+
+To turn the automatic setting off, set `KAGAMI_PROXY=none` or pass your own `clientAddress`. Check it after deploying
+with `npx @agenticslabs/kagami doctor --url https://your-service.example --events <your event log>`, which should report
+your own public address.
 
 **Containment memory.** Render's free tier sleeps after 15 minutes without traffic, and waking up starts with empty
 memory. A deploy does the same. To keep containment through that, add a [store](#the-store). Render's free Key Value

@@ -212,7 +212,7 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
             id: 'client_address',
             status: 'warn',
             message: `Kagami saw the doctor's requests as coming from ${seen}, a private address. Behind a proxy or load balancer that usually means every visitor looks like the proxy, so one attacker could get everyone contained.`,
-            fix: "Set clientAddress: { trustedProxies: ['<your proxy addresses>'] }, and add cloudflare: true behind Cloudflare.",
+            fix: "Set KAGAMI_PROXY=cloudflare when Cloudflare connects to the app directly, or KAGAMI_PROXY=render on Render. For other proxies set clientAddress: { trustedProxies: ['<your proxy addresses>'] }, and add cloudflare: true behind Cloudflare.",
           });
         } else {
           add({ id: 'client_address', status: 'pass', message: `Kagami saw the doctor's requests as coming from ${seen}.` });
