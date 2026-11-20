@@ -672,6 +672,153 @@ const NOSQLI_VALUES: &[&str] = &[
     "[$regex]",
 ];
 
+/// True when `b[i..]` starts with the word `w`, with no letter or digit
+/// directly before or after it.
+fn word_at(b: &[u8], i: usize, w: &[u8]) -> bool {
+    b[i..].starts_with(w)
+        && (i == 0 || !b[i - 1].is_ascii_alphanumeric())
+        && !b.get(i + w.len()).is_some_and(u8::is_ascii_alphanumeric)
+}
+
+fn skip_spaces(b: &[u8], mut i: usize) -> usize {
+    while b.get(i) == Some(&b' ') {
+        i += 1;
+    }
+    i
+}
+
+/// A literal operand at `i`: a number, a quoted string or a boolean word.
+/// Returns where it ends and whether it is a number or `true`. A quoted
+/// string may be left open at the end of the value only when `open_ok`,
+/// because the application's own closing quote completes it.
+fn sql_literal(b: &[u8], i: usize, open_ok: bool) -> Option<(usize, bool)> {
+    let c = *b.get(i)?;
+    if c == b'\'' || c == b'"' {
+        return match b[i + 1..].iter().position(|&x| x == c) {
+            Some(n) => Some((i + n + 2, false)),
+            None if open_ok => Some((b.len(), false)),
+            None => None,
+        };
+    }
+    let mut j = i;
+    if c == b'-' {
+        j += 1;
+    }
+    let start = j;
+    while b.get(j).is_some_and(u8::is_ascii_digit) {
+        j += 1;
+    }
+    if j > start {
+        if b.get(j) == Some(&b'.') && b.get(j + 1).is_some_and(u8::is_ascii_digit) {
+            j += 1;
+            while b.get(j).is_some_and(u8::is_ascii_digit) {
+                j += 1;
+            }
+        }
+        return (!b.get(j).is_some_and(u8::is_ascii_alphabetic)).then_some((j, true));
+    }
+    for w in [&b"true"[..], b"false", b"null"] {
+        if word_at(b, i, w) {
+            return Some((i + w.len(), w == b"true"));
+        }
+    }
+    None
+}
+
+/// The length of a comparison operator at `i`.
+fn sql_comparison(b: &[u8], i: usize) -> Option<usize> {
+    for op in [
+        &b"<=>"[..],
+        b"==",
+        b"!=",
+        b"<>",
+        b"<=",
+        b">=",
+        b"=",
+        b"<",
+        b">",
+    ] {
+        if b[i..].starts_with(op) {
+            return Some(op.len());
+        }
+    }
+    ["like", "regexp", "rlike", "is"]
+        .iter()
+        .find(|w| word_at(b, i, w.as_bytes()))
+        .map(|w| w.len())
+}
+
+/// A literal compared with a literal, such as `2=2`, `'x'='x` or `3>1`, or a
+/// bare `1` or `true` cut off by a comment, such as `true--`.
+fn sql_constant_test(b: &[u8], i: usize) -> bool {
+    let mut i = skip_spaces(b, i);
+    while b.get(i) == Some(&b'(') {
+        i = skip_spaces(b, i + 1);
+    }
+    let Some((end, truthy)) = sql_literal(b, i, false) else {
+        return false;
+    };
+    let mut j = skip_spaces(b, end);
+    while b.get(j) == Some(&b')') {
+        j = skip_spaces(b, j + 1);
+    }
+    if let Some(n) = sql_comparison(b, j) {
+        j = skip_spaces(b, j + n);
+        while b.get(j) == Some(&b'(') {
+            j = skip_spaces(b, j + 1);
+        }
+        return sql_literal(b, j, true).is_some();
+    }
+    truthy
+        && (b[j..].starts_with(b"--")
+            || b[j..].starts_with(b"#")
+            || b[j..].starts_with(b"/*")
+            || b[j..].starts_with(b";"))
+}
+
+/// What comes before a boolean operator in an injection: a closing quote,
+/// backtick or bracket that ends the application's own value, or a value that
+/// is only a number, as in `id=1 or 2=2`.
+fn sql_breaks_out(b: &[u8], i: usize) -> bool {
+    let mut j = i;
+    while j > 0 && b[j - 1] == b' ' {
+        j -= 1;
+    }
+    if j == 0 {
+        return false;
+    }
+    if matches!(b[j - 1], b'\'' | b'"' | b'`' | b')') {
+        return true;
+    }
+    let head = &b[..j];
+    let digits = head.strip_prefix(b"-").unwrap_or(head);
+    !digits.is_empty() && digits.iter().all(u8::is_ascii_digit)
+}
+
+/// Always-true and always-false tests injected into a query, such as
+/// `' or 2=2--`, `") or ('x'='x` and `1 and 3>2`. The table above lists only
+/// the `1=1` forms, and tools and agents vary the numbers and strings.
+fn sql_tautology(m: &str) -> bool {
+    let b = m.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let op = if word_at(b, i, b"or") {
+            2
+        } else if word_at(b, i, b"and") || word_at(b, i, b"xor") {
+            3
+        } else if b[i..].starts_with(b"||") || b[i..].starts_with(b"&&") {
+            2
+        } else {
+            0
+        };
+        if op > 0 && sql_breaks_out(b, i) && sql_constant_test(b, i + op) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Payload rules matching one parameter.
 pub fn payload_rules(p: &Param) -> Vec<&'static RuleDef> {
     let mut hits: Vec<&'static RuleDef> = Vec::new();
@@ -684,7 +831,7 @@ pub fn payload_rules(p: &Param) -> Vec<&'static RuleDef> {
     }
     let m = for_match(&p.value);
     let set = ByteSet::of(&m);
-    if any_word(&m, &set, SQLI) {
+    if any_word(&m, &set, SQLI) || sql_tautology(&m) {
         hits.push(&PAYLOAD_SQLI);
     }
     if any_word(&m, &set, XSS) {
@@ -1067,6 +1214,36 @@ mod tests {
     }
 
     #[test]
+    fn detects_varied_sql_tautologies() {
+        for v in [
+            "' OR 0=0--",
+            "' OR 2=2",
+            "' or 7=7 -- -",
+            "1' oR 5=5 #",
+            "\" or 3>2 --",
+            "') or ('x'='x",
+            "\") OR (\"b\"=\"b",
+            "admin' or 'b'='b",
+            "' OR 'abc' LIKE 'abc",
+            "' or 2<>3--",
+            "'||'a'='a",
+            "' && 4=4--",
+            "' xor 1=2--",
+            "' or true--",
+            "' or 1#",
+            "' or (2)=(2)--",
+            "1 or 2=2",
+            "-1 OR 7=7",
+            "10 and 3>2",
+            "'/**/or/**/2=2--",
+            "%27%20OR%203%3D3--",
+            "x' AND 'q'='q",
+        ] {
+            assert_eq!(q(v), vec!["payload.sqli"], "missed {v:?}");
+        }
+    }
+
+    #[test]
     fn ordinary_input_is_clean() {
         for v in [
             "blue rain jacket",
@@ -1079,6 +1256,19 @@ mod tests {
             "I'd like to confirm (yes)",
             "https://example.com/products?id=3",
             "C'est la vie -- vraiment",
+            "rock 'n' roll or jazz",
+            "\"red\" or \"blue\"",
+            "it's 'small' or 'large'",
+            "5' or 6' tall",
+            "size 'M' and 2 colours",
+            "Q1 and 2026 plans",
+            "x=1 and y=2",
+            "price 5 or 10 = 15",
+            "1 or 2",
+            "tom && jerry",
+            "'quoted' or true love",
+            "true or false",
+            "fish 'n' chips || mushy peas",
         ] {
             assert!(q(v).is_empty(), "false positive on {v:?}: {:?}", q(v));
         }
