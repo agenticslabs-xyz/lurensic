@@ -1,7 +1,7 @@
-use kagami_core::{verify_chain, Action, Config, Engine, Mode, Request, State};
+use lurensic_core::{verify_chain, Action, Config, Engine, Mode, Request, State};
 use serde_json::Value;
 
-const SECRET: &str = "kagami-test-secret-0123456789abcdef0123";
+const SECRET: &str = "lurensic-test-secret-0123456789abcdef0123";
 const BROWSER: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
 const T0: u64 = 1_794_700_800_000;
 
@@ -438,7 +438,7 @@ fn config_errors_are_helpful() {
     .err()
     .unwrap();
     assert_eq!(err.code, "secret_too_short");
-    assert!(err.message.contains("npx @agenticslabs/kagami secret"));
+    assert!(err.message.contains("npx @agenticslabs/lurensic secret"));
     let err = Engine::new(Config::default(), 0, "x").err().unwrap();
     assert_eq!(err.code, "secret_missing");
 }
@@ -563,7 +563,7 @@ fn nested_jndi_lookup_is_detected() {
 }
 
 // Regression tests from the second live benchmark round (2026-11-15). An
-// agent told that Kagami might be present recognised the side bait but
+// agent told that Lurensic might be present recognised the side bait but
 // treated the decoy field in JSON as real app data.
 
 #[test]
@@ -690,9 +690,9 @@ fn fake_env_is_short_and_has_the_same_layout_for_every_source() {
 
 // Regression test from the third live benchmark round (2026-11-16). The
 // agent sent absolute-form request targets (`GET http://host/healthz`).
-// Kagami matched paths on the full URL, so the ignored /healthz got the JSON
+// Lurensic matched paths on the full URL, so the ignored /healthz got the JSON
 // decoy field and the home page lost the bait comment. Comparing the two
-// forms told the agent which parts of the site were Kagami.
+// forms told the agent which parts of the site were Lurensic.
 
 #[test]
 fn absolute_form_targets_are_treated_like_their_path() {
@@ -708,7 +708,7 @@ fn absolute_form_targets_are_treated_like_their_path() {
     ] {
         let a = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", origin));
         let b = e.inspect(&req("203.0.113.9", "curl/8.9", "GET", absolute));
-        let body = |i: &kagami_core::Inspection| match &i.action {
+        let body = |i: &lurensic_core::Inspection| match &i.action {
             Action::Respond { status, body, .. } => format!("{status} {body}"),
             Action::Pass => "pass".into(),
         };
@@ -825,7 +825,7 @@ fn only_the_plain_env_file_is_served() {
 
 fn contain_engine(
     mode: Mode,
-    tweak: impl FnOnce(&mut kagami_core::Containment),
+    tweak: impl FnOnce(&mut lurensic_core::Containment),
 ) -> (Engine, String, String) {
     let (e, _) = engine(mode, |c| {
         c.json_decoys = true;
@@ -838,7 +838,7 @@ fn contain_engine(
     (e, field, route)
 }
 
-fn respond_status(i: &kagami_core::Inspection) -> Option<u16> {
+fn respond_status(i: &lurensic_core::Inspection) -> Option<u16> {
     match &i.action {
         Action::Respond { status, .. } => Some(*status),
         Action::Pass => None,
@@ -865,7 +865,7 @@ fn containment_is_off_by_default() {
 #[test]
 fn a_tripwire_cuts_the_whole_machine_off_from_the_app() {
     let (mut e, field, _) = contain_engine(Mode::Protect, |c| {
-        c.action = kagami_core::ContainAction::Block
+        c.action = lurensic_core::ContainAction::Block
     });
     let trip = e.inspect(&req("198.51.100.4", "curl/8.9", "GET", &trip_url(&field)));
     assert!(trip.contained, "the tripping request itself is contained");
@@ -897,12 +897,12 @@ fn a_tripwire_cuts_the_whole_machine_off_from_the_app() {
 /// containment from a shared store, without announcing it again.
 #[test]
 fn a_containment_from_a_shared_store_holds_on_another_instance() {
-    let block = |c: &mut kagami_core::Containment| c.action = kagami_core::ContainAction::Block;
+    let block = |c: &mut lurensic_core::Containment| c.action = lurensic_core::ContainAction::Block;
     let (mut first, field, _) = contain_engine(Mode::Protect, block);
     let (mut second, _, _) = contain_engine(Mode::Protect, block);
     let trip = first.inspect(&req("203.0.113.9", "curl/8.9", "GET", &trip_url(&field)));
     let c = &trip.contain[0];
-    let stored = kagami_core::StoredEntry {
+    let stored = lurensic_core::StoredEntry {
         source: c.source.clone(),
         target: c.target.clone(),
         reason: c.reason.to_string(),
@@ -937,7 +937,7 @@ fn a_containment_from_a_shared_store_holds_on_another_instance() {
 
     // An expired entry, or one from another deployment, has no effect.
     let (mut third, _, _) = contain_engine(Mode::Protect, block);
-    let expired = kagami_core::StoredEntry {
+    let expired = lurensic_core::StoredEntry {
         until_ms: T0,
         ..stored.clone()
     };
@@ -1137,8 +1137,8 @@ fn the_flagged_trigger_also_contains_on_accumulated_signals() {
         "/search?q=..%2F..%2Fetc%2Fpasswd",
     ];
     for (trigger, expect) in [
-        (kagami_core::Trigger::Tripwire, false),
-        (kagami_core::Trigger::Flagged, true),
+        (lurensic_core::Trigger::Tripwire, false),
+        (lurensic_core::Trigger::Flagged, true),
     ] {
         let (mut e, _, _) = contain_engine(Mode::Protect, |c| c.trigger = trigger);
         let mut last = None;
@@ -1260,7 +1260,7 @@ fn the_core_resolves_the_client_address_from_the_peer() {
     );
 }
 
-fn respond_body(i: &kagami_core::Inspection) -> Option<(u16, String)> {
+fn respond_body(i: &lurensic_core::Inspection) -> Option<(u16, String)> {
     match &i.action {
         Action::Respond { status, body, .. } => Some((*status, body.clone())),
         _ => None,

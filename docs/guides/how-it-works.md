@@ -1,14 +1,14 @@
-# How Kagami works
+# How Lurensic works
 
 ## One request
 
-Kagami sees every request before your application does, and every response after.
+Lurensic sees every request before your application does, and every response after.
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant A as Adapter (Express)
-    participant K as kagami-core
+    participant K as lurensic-core
     participant App as Your app
     C->>A: request
     A->>K: inspect (method, path, query, headers, body, peer address, subject)
@@ -17,7 +17,7 @@ sequenceDiagram
     K->>K: contain the machine if a tripwire fired and containment is on
     alt contained, or a decoy or bait path
         K-->>A: answer it (shadow copy, decoy, fake file or 403)
-        A-->>C: Kagami's answer, the app never runs
+        A-->>C: Lurensic's answer, the app never runs
     else ordinary request
         K-->>A: pass, decorate the response if needed
         A->>App: request
@@ -34,7 +34,7 @@ network and no file access. The adapter passes in the time and the request, and 
 
 ## Sessions and machines
 
-Kagami tracks two things.
+Lurensic tracks two things.
 
 - A **machine** is one client address, or one IPv6 /64, because an IPv6 client usually controls its whole /64.
   Honeytokens and containment work on machines.
@@ -74,9 +74,9 @@ flowchart LR
 ```
 
 Every planted credential encodes, in a form only your server can verify, the machine it was handed to. When it is
-used, even from another address, Kagami knows which machine found it.
+used, even from another address, Lurensic knows which machine found it.
 
-Names and values are derived from your secret. Two Kagami deployments use different decoy routes, fields and
+Names and values are derived from your secret. Two Lurensic deployments use different decoy routes, fields and
 credentials, so there is no list an attacker can tell an agent to avoid.
 
 The optional decoy API description lists only decoy routes and carries a sandbox key that is a honeytoken. An
@@ -122,7 +122,7 @@ Containment inside the app protects the app. Enforcers push the same decision to
 
 ```mermaid
 flowchart LR
-    K["Kagami in the app"] -->|"each contained machine"| E{"Enforcers"}
+    K["Lurensic in the app"] -->|"each contained machine"| E{"Enforcers"}
     E --> F["blocklistFile<br/>plain, nginx or JSON"]
     E --> W["webhookEnforcer<br/>your endpoint"]
     F --> N["nginx, ipset, iptables,<br/>AWS WAF import"]

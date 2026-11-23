@@ -5,17 +5,17 @@ import { parseArgs } from 'node:util';
 import { verifyChain } from './chain.js';
 import { formatChecks, runDoctor } from './doctor.js';
 
-const HELP = `Kagami command line tool. Deception-based defence against AI-driven attacks.
+const HELP = `Lurensic command line tool. Deception-based defence against AI-driven attacks.
 
 Commands
-  kagami secret              Print a new random deployment secret for KAGAMI_SECRET
-  kagami doctor [options]    Check that Kagami is installed and working
+  lurensic secret              Print a new random deployment secret for LURENSIC_SECRET
+  lurensic doctor [options]    Check that Lurensic is installed and working
       --url <url>            Also probe the running app, for example http://localhost:3000
       --events <file>        Also read the event log written by fileSink
       --blocklist <file>     Also check a JSON blocklist written by blocklistFile
       --json                 Print the results as JSON, for scripts and AI agents
-  kagami verify-log <file>   Verify the hash chain of a Kagami JSON-lines event log
-  kagami help                Show this help
+  lurensic verify-log <file>   Verify the hash chain of a Lurensic JSON-lines event log
+  lurensic help                Show this help
 `;
 
 const { values, positionals } = parseArgs({
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     case 'verify-log': {
       const file = args[0];
       if (!file) {
-        process.stderr.write('Give the log file to check, for example kagami verify-log kagami-events.jsonl\n');
+        process.stderr.write('Give the log file to check, for example lurensic verify-log lurensic-events.jsonl\n');
         process.exitCode = 2;
         return;
       }

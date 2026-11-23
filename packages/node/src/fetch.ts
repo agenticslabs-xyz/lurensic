@@ -1,24 +1,24 @@
 /**
- * Kagami for any app built on the web-standard Request and Response API.
+ * Lurensic for any app built on the web-standard Request and Response API.
  * That covers Cloudflare Workers, Deno, Bun, and frameworks such as Hono
  * that expose a `fetch(request)` handler.
  *
- *   import { kagami } from '@agenticslabs/kagami';
- *   export default kagami(app);
+ *   import { lurensic } from '@agenticslabs/lurensic';
+ *   export default lurensic(app);
  *
- * Every code path fails open. If anything inside Kagami goes wrong, the
+ * Every code path fails open. If anything inside Lurensic goes wrong, the
  * request goes to the app untouched.
  */
-import { Kagami } from './kagami.js';
+import { Lurensic } from './lurensic.js';
 import { processEnv, type Env } from './platform.js';
-import type { HttpRequest, KagamiOptions, Verdict } from './types.js';
+import type { HttpRequest, LurensicOptions, Verdict } from './types.js';
 
-export interface FetchAdapterOptions extends KagamiOptions {
+export interface FetchAdapterOptions extends LurensicOptions {
   /** Reuse an existing engine instead of creating one. */
-  instance?: Kagami;
+  instance?: Lurensic;
   /**
    * Find the client address yourself. Prefer `clientAddress`, which lets
-   * Kagami do it safely. Without either, the address comes from the runtime.
+   * Lurensic do it safely. Without either, the address comes from the runtime.
    * That is `CF-Connecting-IP` on Cloudflare Workers, the connection's
    * address on Deno, Bun and @hono/node-server, and nothing elsewhere.
    */
@@ -33,7 +33,7 @@ export interface FetchAdapterOptions extends KagamiOptions {
   subject?: (request: Request, platform: unknown) => string | number | null | undefined;
 }
 
-/** Call a developer's `subject` function safely. Kagami never fails because of it. */
+/** Call a developer's `subject` function safely. Lurensic never fails because of it. */
 export function subjectOf<A extends unknown[]>(fn: ((...args: A) => unknown) | undefined, ...args: A): string | undefined {
   if (typeof fn !== 'function') return undefined;
   try {
@@ -49,7 +49,7 @@ export function subjectOf<A extends unknown[]>(fn: ((...args: A) => unknown) | u
 }
 
 /** What the app can read about the current request, and the seal helpers. */
-export interface KagamiContext {
+export interface LurensicContext {
   readonly session: string;
   readonly source: string;
   readonly state: Verdict['state'];
@@ -68,12 +68,12 @@ type Next = (request: Request) => Promise<Response>;
 const MAX_DECORATE = 1024 * 1024;
 /** The largest body kept for the shadow, as in the Express adapter. */
 const MAX_CAPTURE = 64 * 1024;
-const ENV_KEYS = ['KAGAMI_SECRET', 'KAGAMI_MODE', 'KAGAMI_DECOYS', 'KAGAMI_SITE', 'KAGAMI_CONTAINMENT', 'KAGAMI_PROXY', 'KAGAMI_DISABLED', 'NODE_ENV', 'RENDER'] as const;
+const ENV_KEYS = ['LURENSIC_SECRET', 'LURENSIC_MODE', 'LURENSIC_DECOYS', 'LURENSIC_SITE', 'LURENSIC_CONTAINMENT', 'LURENSIC_PROXY', 'LURENSIC_DISABLED', 'NODE_ENV', 'RENDER'] as const;
 const decoder = new TextDecoder();
-const contexts = new WeakMap<Request, KagamiContext>();
+const contexts = new WeakMap<Request, LurensicContext>();
 
-/** The Kagami context for a request handled by the fetch or Hono adapter. */
-export function kagamiContext(request: Request): KagamiContext | undefined {
+/** The Lurensic context for a request handled by the fetch or Hono adapter. */
+export function lurensicContext(request: Request): LurensicContext | undefined {
   return contexts.get(request);
 }
 
@@ -107,7 +107,7 @@ export function peerAddress(request: Request, platform: unknown): string {
   return '';
 }
 
-/** Kagami settings from Cloudflare Workers bindings, which arrive with each request instead of in process.env. */
+/** Lurensic settings from Cloudflare Workers bindings, which arrive with each request instead of in process.env. */
 function bindingsEnv(platform: unknown): Env {
   const out: Env = {};
   if (!platform || typeof platform !== 'object') return out;
@@ -194,18 +194,18 @@ function sampleHeaders(headers: Headers): Array<[string, string]> {
 }
 
 /**
- * The shared request handling behind `kagami(app)` and the Hono middleware.
+ * The shared request handling behind `lurensic(app)` and the Hono middleware.
  * Adapters for other web-standard frameworks can use it the same way.
  */
 export class FetchGuard {
-  private engine: Kagami | undefined;
+  private engine: Lurensic | undefined;
 
   constructor(private readonly options: FetchAdapterOptions = {}) {
     this.engine = options.instance;
   }
 
   /**
-   * With `clientAddress`, `KAGAMI_PROXY` or the automatic Render setting,
+   * With `clientAddress`, `LURENSIC_PROXY` or the automatic Render setting,
    * the core resolves the client address from the peer and the headers. A
    * custom `clientIp` function takes precedence.
    */
@@ -217,41 +217,41 @@ export class FetchGuard {
    * The engine. It is created on first use, so on Cloudflare Workers it can
    * read the settings that arrive with the first request.
    */
-  kagami(platform?: unknown): Kagami {
+  lurensic(platform?: unknown): Lurensic {
     if (!this.engine) {
       // On Cloudflare Workers, bindings arrive with the request. `store` can
-      // be a function that picks one, and a binding named KAGAMI_STORE is
+      // be a function that picks one, and a binding named LURENSIC_STORE is
       // used without any code.
       let store: unknown = this.options.store;
       try {
         if (typeof store === 'function') store = (store as (platform: unknown) => unknown)(platform);
         else if (store === undefined && platform && typeof platform === 'object') {
-          const binding = (platform as Record<string, unknown>).KAGAMI_STORE;
+          const binding = (platform as Record<string, unknown>).LURENSIC_STORE;
           if (binding && typeof binding === 'object') store = binding;
         }
       } catch {
         store = undefined;
       }
-      this.engine = new Kagami({ ...this.options, store, env: this.options.env ?? { ...processEnv(), ...bindingsEnv(platform) } });
+      this.engine = new Lurensic({ ...this.options, store, env: this.options.env ?? { ...processEnv(), ...bindingsEnv(platform) } });
     }
     return this.engine;
   }
 
-  /** The Kagami context of a request this guard is handling. */
-  context(request: Request): KagamiContext | undefined {
+  /** The Lurensic context of a request this guard is handling. */
+  context(request: Request): LurensicContext | undefined {
     return contexts.get(request);
   }
 
   async handle(request: Request, platform: unknown, next: Next, waitUntil?: (p: Promise<unknown>) => void): Promise<Response> {
-    let k: Kagami;
+    let k: Lurensic;
     let info: HttpRequest;
     let verdict: Verdict;
     try {
-      k = this.kagami(platform);
+      k = this.lurensic(platform);
       if (!k.isEnabled) return next(request);
       info = await this.describe(request, platform, k.maxBodyBytes);
       // Without a client address every visitor would look like one machine,
-      // and one tripwire would contain everybody. Kagami steps aside instead.
+      // and one tripwire would contain everybody. Lurensic steps aside instead.
       if (!info.ip && !info.peer) {
         this.noAddress();
         return next(request);
@@ -299,7 +299,7 @@ export class FetchGuard {
     }
   }
 
-  /** Kagami's view of the request. The app still receives the original, unread body. */
+  /** Lurensic's view of the request. The app still receives the original, unread body. */
   private async describe(request: Request, platform: unknown, maxBody: number): Promise<HttpRequest> {
     const url = new URL(request.url);
     const headers: Array<[string, string]> = [];
@@ -331,7 +331,7 @@ export class FetchGuard {
   }
 
   /** Decorate the app's response and give the shadow a copy when the core asks for one. */
-  private async afterResponse(k: Kagami, info: HttpRequest, verdict: Verdict, res: Response): Promise<Response> {
+  private async afterResponse(k: Lurensic, info: HttpRequest, verdict: Verdict, res: Response): Promise<Response> {
     const status = res.status;
     const ct = (res.headers.get('content-type') ?? '').toLowerCase();
     const wanted = verdict.capture || (status === 401 && k.wants401Body);
@@ -358,7 +358,7 @@ export class FetchGuard {
         out = text;
       }
     }
-    // The shadow keeps the app's own body, never Kagami's bait.
+    // The shadow keeps the app's own body, never Lurensic's bait.
     const sample = wanted && (text.length <= MAX_CAPTURE || redirect) ? { headers: sampleHeaders(res.headers), body: text.length <= MAX_CAPTURE ? text : '' } : undefined;
     k.response(info, status, sample);
     const headers = new Headers(res.headers);
@@ -373,7 +373,7 @@ export class FetchGuard {
     this.warnedNoAddress = true;
     try {
       (this.options.logger ?? console).warn(
-        '[kagami] The client address is unknown on this runtime, so Kagami lets requests through untouched. ' +
+        '[lurensic] The client address is unknown on this runtime, so Lurensic lets requests through untouched. ' +
           'Pass clientIp, for example clientIp: (request) => request.headers.get("x-nf-client-connection-ip") on Netlify. ' +
           'See docs/guides/choose-your-setup.md.',
       );
@@ -383,7 +383,7 @@ export class FetchGuard {
   }
 
   /** On Cloudflare Workers, events and enforcers finish after the response is sent. */
-  private background(k: Kagami, waitUntil?: (p: Promise<unknown>) => void): void {
+  private background(k: Lurensic, waitUntil?: (p: Promise<unknown>) => void): void {
     if (!waitUntil) return;
     try {
       waitUntil(k.flush());
@@ -395,10 +395,10 @@ export class FetchGuard {
 
 type FetchHandler = (request: Request, ...rest: never[]) => Response | Promise<Response>;
 
-/** A `fetch` handler wrapped by Kagami. `kagami` gives access to the engine. */
+/** A `fetch` handler wrapped by Lurensic. `lurensic` gives access to the engine. */
 export interface GuardedApp {
   fetch(request: Request, ...rest: unknown[]): Promise<Response>;
-  readonly kagami: Kagami;
+  readonly lurensic: Lurensic;
 }
 
 /**
@@ -406,7 +406,7 @@ export interface GuardedApp {
  * handler function itself. On Cloudflare Workers, Deno and Bun the result can
  * be the module's default export.
  */
-export function kagami(app: FetchHandler | { fetch: FetchHandler }, options: FetchAdapterOptions = {}): GuardedApp {
+export function lurensic(app: FetchHandler | { fetch: FetchHandler }, options: FetchAdapterOptions = {}): GuardedApp {
   const guard = new FetchGuard(options);
   const handler = (typeof app === 'function' ? app : app.fetch.bind(app)) as (request: Request, ...rest: unknown[]) => Response | Promise<Response>;
   const wrapped = {
@@ -419,6 +419,6 @@ export function kagami(app: FetchHandler | { fetch: FetchHandler }, options: Fet
   // Not enumerable, so platforms that look at the default export's handlers
   // only see `fetch`. Reading it creates the engine from process.env if no
   // request has created it yet.
-  Object.defineProperty(wrapped, 'kagami', { get: () => guard.kagami(), enumerable: false });
+  Object.defineProperty(wrapped, 'lurensic', { get: () => guard.lurensic(), enumerable: false });
   return wrapped as GuardedApp;
 }

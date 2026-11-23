@@ -6,13 +6,13 @@ from your application, and enforcers can block it in front of your application t
 ## Turning it on
 
 ```js
-app.use(kagami({
+app.use(lurensic({
   mode: 'protect',
   containment: true,
 }));
 ```
 
-With `mode: 'observe'`, containment is a dry run. Kagami emits a `containment.started` event with
+With `mode: 'observe'`, containment is a dry run. Lurensic emits a `containment.started` event with
 `"enforced": false` for every machine it would have contained, and changes nothing. Run it like that for a while
 before you enforce it.
 
@@ -47,14 +47,14 @@ addresses.
 
 ## Protection against misuse
 
-Containment blocks addresses, so Kagami makes it hard to get someone else blocked.
+Containment blocks addresses, so Lurensic makes it hard to get someone else blocked.
 
-- **Forged address headers.** Kagami only uses `X-Forwarded-For` and `CF-Connecting-IP` from hops you trust. See
+- **Forged address headers.** Lurensic only uses `X-Forwarded-For` and `CF-Connecting-IP` from hops you trust. See
   [Behind a proxy or CDN](behind-a-proxy.md).
 - **Cross-site forgery.** An attacker's web page could make a visitor's browser submit a changed decoy field to your
-  site. Browsers mark such requests with `Sec-Fetch-Site: cross-site` or a foreign `Origin`, and Kagami never
+  site. Browsers mark such requests with `Sec-Fetch-Site: cross-site` or a foreign `Origin`, and Lurensic never
   contains on them. The detection is still logged.
-- **The doctor.** `kagami doctor` never touches a tripwire, so checking your setup never contains you.
+- **The doctor.** `lurensic doctor` never touches a tripwire, so checking your setup never contains you.
 
 ## The shadow
 
@@ -75,10 +75,10 @@ flowchart TB
     B -->|no| NF["The app's own 404 page"]
 ```
 
-Kagami stores a response only if a shared HTTP cache could store it. The one exception is the app's answer to a
+Lurensic stores a response only if a shared HTTP cache could store it. The one exception is the app's answer to a
 failed form post, such as its wrong password page, so a contained attacker's login looks like any other failed
 login. That answer is kept only after two anonymous submissions with different bodies received byte-identical
-responses, so it never repeats what a visitor typed, and Kagami keeps only a hash of each request body.
+responses, so it never repeats what a visitor typed, and Lurensic keeps only a hash of each request body.
 
 - The request was a GET without a cookie or an `Authorization` header.
 - The response has no `Set-Cookie`, no `Cache-Control: private` or `no-store`, is at most 64 KiB, and has a
@@ -98,11 +98,11 @@ Enforcers receive each newly contained machine, off the request path, and push i
 | `callbackEnforcer(fn)` | Your own function | Anything in process |
 
 ```js
-import { blocklistFile, webhookEnforcer } from '@agenticslabs/kagami-express';
+import { blocklistFile, webhookEnforcer } from '@agenticslabs/lurensic-express';
 
 enforcers: [
-  blocklistFile({ path: '/etc/nginx/kagami-blocked.conf', format: 'nginx', onChange: reloadNginx }),
-  webhookEnforcer({ url: 'https://soar.example.com/kagami', secret: process.env.KAGAMI_ENFORCER_SECRET }),
+  blocklistFile({ path: '/etc/nginx/lurensic-blocked.conf', format: 'nginx', onChange: reloadNginx }),
+  webhookEnforcer({ url: 'https://soar.example.com/lurensic', secret: process.env.LURENSIC_ENFORCER_SECRET }),
 ],
 ```
 
@@ -118,10 +118,10 @@ Webhook payloads look like this.
 }
 ```
 
-The `kagami-signature` header is `t=<unix seconds>,v1=<hex HMAC-SHA256 of t + "." + body>`. Reject old timestamps.
+The `lurensic-signature` header is `t=<unix seconds>,v1=<hex HMAC-SHA256 of t + "." + body>`. Reject old timestamps.
 
 Enforcers only receive public addresses unless you pass `includePrivate: true`. A failing enforcer never affects
-requests. Its failures are counted in `kagami.stats().enforcerErrors`.
+requests. Its failures are counted in `lurensic.stats().enforcerErrors`.
 
 Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in [Blocking at your firewall or CDN](firewall.md).
 
@@ -132,10 +132,10 @@ Cloudflare Workers or serverless hosts each copy has its own memory. Add a store
 and keep it through restarts.
 
 ```js
-app.use(kagami({ containment: true, store: redis }));   // Workers KV, Deno KV, Netlify Blobs or a Redis client
+app.use(lurensic({ containment: true, store: redis }));   // Workers KV, Deno KV, Netlify Blobs or a Redis client
 ```
 
-On Cloudflare Workers a KV binding named `KAGAMI_STORE` is used without any code. Each new containment is written to
+On Cloudflare Workers a KV binding named `LURENSIC_STORE` is used without any code. Each new containment is written to
 the store off the request path, and each copy reads a machine from the store before its first request there. A slow or
 broken store never holds up a request. The details, and what each store costs, are in
 [Choose your setup](choose-your-setup.md#the-store).
@@ -143,16 +143,16 @@ broken store never holds up a request. The details, and what each store costs, a
 ## Managing contained machines
 
 ```js
-kagami.contained();             // the current list, soonest expiry first
-kagami.release('198.51.100.4'); // end it early, and tell every enforcer
+lurensic.contained();             // the current list, soonest expiry first
+lurensic.release('198.51.100.4'); // end it early, and tell every enforcer
 ```
 
-With Express, keep the value `kagami()` returns and use its `kagami` property.
+With Express, keep the value `lurensic()` returns and use its `lurensic` property.
 
 ```js
-const guard = kagami({ mode: 'protect', containment: true });
+const guard = lurensic({ mode: 'protect', containment: true });
 app.use(guard);
-guard.kagami.contained();
+guard.lurensic.contained();
 ```
 
 The list holds client addresses, so keep any page that shows it behind your own authentication.

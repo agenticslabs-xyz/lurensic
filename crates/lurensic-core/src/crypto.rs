@@ -1,4 +1,4 @@
-//! Keyed derivation helpers. Everything secret-dependent in Kagami goes
+//! Keyed derivation helpers. Everything secret-dependent in Lurensic goes
 //! through `Keys::mac`, with a distinct label per purpose (domain separation).
 
 use hmac::{Hmac, Mac};
@@ -20,7 +20,7 @@ pub struct Keys {
 impl Keys {
     pub fn new(secret: &str) -> Self {
         Keys {
-            root: hmac_raw(b"kagami/v1/root", &[secret.as_bytes()]),
+            root: hmac_raw(b"lurensic/v1/root", &[secret.as_bytes()]),
         }
     }
 

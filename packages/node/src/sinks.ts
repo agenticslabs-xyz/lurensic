@@ -7,7 +7,7 @@
  *   supplied by an attacker. Webhooks never follow redirects.
  */
 import { defer, hmacSha256Hex, writeLine } from './platform.js';
-import { SEVERITY_RANK, type EventRecord, type KagamiEvent, type Severity, type Sink } from './types.js';
+import { SEVERITY_RANK, type EventRecord, type LurensicEvent, type Severity, type Sink } from './types.js';
 
 const MAX_QUEUE = 10_000;
 const BATCH = 500;
@@ -32,9 +32,9 @@ export class Pipeline {
         this.dropped++;
         continue;
       }
-      let event: KagamiEvent;
+      let event: LurensicEvent;
       try {
-        event = JSON.parse(line) as KagamiEvent;
+        event = JSON.parse(line) as LurensicEvent;
       } catch {
         this.dropped++;
         continue;
@@ -87,7 +87,7 @@ export class Pipeline {
     const now = Date.now();
     if (now - this.lastWarn > 60_000) {
       this.lastWarn = now;
-      this.warn(`[kagami] ${msg} (further sink errors suppressed for 60s)`);
+      this.warn(`[lurensic] ${msg} (further sink errors suppressed for 60s)`);
     }
   }
 
@@ -158,7 +158,7 @@ async function post(url: URL, body: string, headers: Record<string, string>, tim
 
 /**
  * POST batches as `{"events":[...]}`. With `secret` set, each request carries
- * the header `kagami-signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`
+ * the header `lurensic-signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`
  * so receivers can reject forged or replayed alerts.
  */
 export function webhookSink(opts: {
@@ -178,7 +178,7 @@ export function webhookSink(opts: {
       if (opts.secret) {
         const t = Math.floor(Date.now() / 1000);
         const sig = await hmacSha256Hex(opts.secret, `${t}.${body}`);
-        headers['kagami-signature'] = `t=${t},v1=${sig}`;
+        headers['lurensic-signature'] = `t=${t},v1=${sig}`;
       }
       await post(url, body, headers, opts.timeoutMs ?? 5000);
     },
@@ -196,9 +196,9 @@ export function escapeSlack(text: unknown, max = 200): string {
   return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
-export function formatSlack(e: KagamiEvent): string {
+export function formatSlack(e: LurensicEvent): string {
   const lines = [
-    `*Kagami ${e.severity.toUpperCase()}* ${escapeSlack(e.title)} (\`${escapeSlack(e.rule, 64)}\`)`,
+    `*Lurensic ${e.severity.toUpperCase()}* ${escapeSlack(e.title)} (\`${escapeSlack(e.rule, 64)}\`)`,
   ];
   if (e.session) lines.push(`session \`${escapeSlack(e.session.id, 32)}\`, score ${e.session.score}, state ${e.session.state}`);
   if (e.request) lines.push(`request \`${escapeSlack(e.request.method, 16)} ${escapeSlack(e.request.path, 160)}\``);
@@ -222,7 +222,7 @@ export function slackSink(opts: { webhookUrl: string; minSeverity?: Severity; ti
 }
 
 /** Call a function for each event. Useful for in-process integrations and tests. */
-export function callbackSink(fn: (event: KagamiEvent, line: string) => void | Promise<void>, minSeverity: Severity = 'info'): Sink {
+export function callbackSink(fn: (event: LurensicEvent, line: string) => void | Promise<void>, minSeverity: Severity = 'info'): Sink {
   return {
     name: 'callback',
     minSeverity,
@@ -234,13 +234,13 @@ export function callbackSink(fn: (event: KagamiEvent, line: string) => void | Pr
 
 /**
  * The sink behind the `onDetect` option. It passes detection and session
- * events, skips Kagami's own system events, and keeps going when one call
- * fails, so a single bad event never drops the rest of a batch. Kagami waits
+ * events, skips Lurensic's own system events, and keeps going when one call
+ * fails, so a single bad event never drops the rest of a batch. Lurensic waits
  * at most `timeoutMs` for each call, so a handler that never settles cannot
  * hold up the other sinks. The handler itself keeps running.
  */
 export function detectSink(
-  fn: (event: KagamiEvent) => void | Promise<void>,
+  fn: (event: LurensicEvent) => void | Promise<void>,
   minSeverity: Severity = 'low',
   timeoutMs = 5000,
 ): Sink {
@@ -271,8 +271,8 @@ export function detectSink(
 }
 
 /** Keeps events in memory for tests and local tooling. */
-export function memorySink(minSeverity: Severity = 'info'): Sink & { events: KagamiEvent[]; lines: string[] } {
-  const events: KagamiEvent[] = [];
+export function memorySink(minSeverity: Severity = 'info'): Sink & { events: LurensicEvent[]; lines: string[] } {
+  const events: LurensicEvent[] = [];
   const lines: string[] = [];
   return {
     name: 'memory',

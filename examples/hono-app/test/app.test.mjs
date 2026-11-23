@@ -8,7 +8,7 @@ const SECRET = 'hono-app-test-secret-0123456789abcdef-012345';
 const quiet = { warn() {} };
 const from = (ip) => ({ incoming: { socket: { remoteAddress: ip } } });
 
-test('the shop works and Kagami protects it', async () => {
+test('the shop works and Lurensic protects it', async () => {
   const app = createApp({ secret: SECRET, mode: 'protect', containment: { action: 'block' }, sinks: [], logger: quiet });
   const products = await app.request('/api/products', {}, from('198.51.100.20'));
   assert.equal(products.status, 200);

@@ -1,18 +1,18 @@
 /**
- * `kagami doctor` checks that Kagami is installed and working, for people and
+ * `lurensic doctor` checks that Lurensic is installed and working, for people and
  * for AI coding agents that integrate it. Every check reports a status and,
  * when something is wrong, the fix.
  *
  * The doctor never touches a tripwire. With containment on, a tripwire would
  * cut off the machine running the doctor. Its live probes ask for `/.env`,
- * which Kagami answers with a fake file in protect mode and which records one
+ * which Lurensic answers with a fake file in protect mode and which records one
  * `bait.path` event, and for the deployment's decoy API description, which
  * records one low `decoy.spec` event. Neither ever contains. Requests carry the
- * user agent `kagami-doctor/<version>` so they are easy to recognise in logs.
+ * user agent `lurensic-doctor/<version>` so they are easy to recognise in logs.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { Kagami } from './kagami.js';
+import { Lurensic } from './lurensic.js';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'info';
 
@@ -27,7 +27,7 @@ export interface Check {
 export interface DoctorOptions {
   /** Base URL of the running app, such as http://localhost:3000. Enables the live checks. */
   url?: string;
-  /** Path of the Kagami event log written by `fileSink`, to confirm events arrive. */
+  /** Path of the Lurensic event log written by `fileSink`, to confirm events arrive. */
   events?: string;
   /** Path of a JSON blocklist written by `blocklistFile({ format: 'json' })`, to check enforcement output. */
   blocklist?: string;
@@ -38,7 +38,7 @@ export interface DoctorOptions {
 }
 
 const VERSION = '0.1.0';
-const UA = `kagami-doctor/${VERSION}`;
+const UA = `lurensic-doctor/${VERSION}`;
 
 function isPrivate(ip: string): boolean {
   const a = ip.replace(/^::ffff:/i, '');
@@ -58,7 +58,7 @@ async function checkSpec(base: URL, secret: string, f: typeof fetch, add: (c: Ch
   let path: string | undefined;
   let aliases: string[] = [];
   try {
-    const k = new Kagami({ secret, mode: 'protect', decoys: { spec: true }, sinks: [], logger: { warn() {} } });
+    const k = new Lurensic({ secret, mode: 'protect', decoys: { spec: true }, sinks: [], logger: { warn() {} } });
     const d = k.manifest()?.decoys as { spec_path?: string; spec_aliases?: string[] } | undefined;
     path = d?.spec_path ?? undefined;
     aliases = d?.spec_aliases ?? [];
@@ -86,14 +86,14 @@ async function checkSpec(base: URL, secret: string, f: typeof fetch, add: (c: Ch
       id: 'spec',
       status: 'warn',
       message: `The app publishes its own API description at ${real.join(', ')}. The decoy description would take that place.`,
-      fix: `Leave decoys.spec off, or add ${real.map((p) => `'${p}'`).join(', ')} to decoys.reservedPaths so Kagami leaves them alone.`,
+      fix: `Leave decoys.spec off, or add ${real.map((p) => `'${p}'`).join(', ')} to decoys.reservedPaths so Lurensic leaves them alone.`,
     });
   } else {
     add({
       id: 'spec',
       status: 'info',
-      message: `The decoy API description is off or Kagami is in observe mode. The app serves no description at ${path} or the ${aliases.length} other common paths, so it is safe to turn on.`,
-      fix: 'Set KAGAMI_DECOYS=spec, or decoys: { spec: true }, in protect mode.',
+      message: `The decoy API description is off or Lurensic is in observe mode. The app serves no description at ${path} or the ${aliases.length} other common paths, so it is safe to turn on.`,
+      fix: 'Set LURENSIC_DECOYS=spec, or decoys: { spec: true }, in protect mode.',
     });
   }
 }
@@ -107,36 +107,36 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
   };
 
   // 1. Configuration in the environment.
-  const secret = env.KAGAMI_SECRET ?? '';
+  const secret = env.LURENSIC_SECRET ?? '';
   if (!secret) {
     add({
       id: 'secret',
       status: env.NODE_ENV === 'production' ? 'fail' : 'warn',
-      message: 'KAGAMI_SECRET is not set in this environment. In production Kagami then switches itself off and lets every request through.',
-      fix: 'Generate one with `npx @agenticslabs/kagami secret` and set it as KAGAMI_SECRET wherever the app runs. Keep it out of source control.',
+      message: 'LURENSIC_SECRET is not set in this environment. In production Lurensic then switches itself off and lets every request through.',
+      fix: 'Generate one with `npx @agenticslabs/lurensic secret` and set it as LURENSIC_SECRET wherever the app runs. Keep it out of source control.',
     });
   } else if (secret.length < 32) {
-    add({ id: 'secret', status: 'fail', message: 'KAGAMI_SECRET is shorter than 32 characters, so Kagami will refuse it.', fix: 'Replace it with the output of `npx @agenticslabs/kagami secret`.' });
+    add({ id: 'secret', status: 'fail', message: 'LURENSIC_SECRET is shorter than 32 characters, so Lurensic will refuse it.', fix: 'Replace it with the output of `npx @agenticslabs/lurensic secret`.' });
   } else {
-    add({ id: 'secret', status: 'pass', message: 'KAGAMI_SECRET is set and long enough.' });
+    add({ id: 'secret', status: 'pass', message: 'LURENSIC_SECRET is set and long enough.' });
   }
-  if (['1', 'true', 'yes'].includes(env.KAGAMI_DISABLED ?? '')) {
-    add({ id: 'kill_switch', status: 'warn', message: 'KAGAMI_DISABLED is set, so Kagami is switched off.', fix: 'Unset KAGAMI_DISABLED to turn Kagami back on.' });
+  if (['1', 'true', 'yes'].includes(env.LURENSIC_DISABLED ?? '')) {
+    add({ id: 'kill_switch', status: 'warn', message: 'LURENSIC_DISABLED is set, so Lurensic is switched off.', fix: 'Unset LURENSIC_DISABLED to turn Lurensic back on.' });
   }
-  const mode = env.KAGAMI_MODE;
+  const mode = env.LURENSIC_MODE;
   if (mode && mode !== 'observe' && mode !== 'protect') {
-    add({ id: 'mode', status: 'fail', message: `KAGAMI_MODE is "${mode}", which is not a mode.`, fix: 'Use observe or protect.' });
+    add({ id: 'mode', status: 'fail', message: `LURENSIC_MODE is "${mode}", which is not a mode.`, fix: 'Use observe or protect.' });
   }
 
   // 2. The engine loads and detects.
   try {
-    const k = new Kagami({ secret: secret.length >= 32 ? secret : 'kagami-doctor-temporary-secret-0123456789', mode: 'observe', sinks: [], logger: { warn() {} } });
+    const k = new Lurensic({ secret: secret.length >= 32 ? secret : 'lurensic-doctor-temporary-secret-0123456789', mode: 'observe', sinks: [], logger: { warn() {} } });
     const v = k.inspect({ ip: '198.51.100.1', method: 'GET', host: 'doctor.local', path: '/search', query: "q=1'%20OR%20'1'%3D'1", headers: [['user-agent', UA]] });
     await k.close();
-    if (k.isEnabled && v.rules.includes('payload.sqli')) add({ id: 'engine', status: 'pass', message: 'The Kagami engine loads and detects a test attack.' });
-    else add({ id: 'engine', status: 'fail', message: 'The Kagami engine did not detect a test attack.', fix: 'Reinstall @agenticslabs/kagami. If you bundle the app, check that the bundler keeps the package entry, which loads the engine.' });
+    if (k.isEnabled && v.rules.includes('payload.sqli')) add({ id: 'engine', status: 'pass', message: 'The Lurensic engine loads and detects a test attack.' });
+    else add({ id: 'engine', status: 'fail', message: 'The Lurensic engine did not detect a test attack.', fix: 'Reinstall @agenticslabs/lurensic. If you bundle the app, check that the bundler keeps the package entry, which loads the engine.' });
   } catch (err) {
-    add({ id: 'engine', status: 'fail', message: `The Kagami engine failed to load. ${(err as Error)?.message ?? err}`, fix: 'Reinstall @agenticslabs/kagami. Node 20 or newer is required.' });
+    add({ id: 'engine', status: 'fail', message: `The Lurensic engine failed to load. ${(err as Error)?.message ?? err}`, fix: 'Reinstall @agenticslabs/lurensic. Node 20 or newer is required.' });
   }
 
   // 3. The running app.
@@ -154,20 +154,20 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
         const env = await f(new URL('/.env', base), { headers: { 'user-agent': UA }, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
         const text = env.status === 200 ? await env.text() : '';
         if (/^NODE_ENV=production$/m.test(text) && /^SESSION_SECRET=/m.test(text)) {
-          add({ id: 'protect', status: 'pass', message: 'Kagami is mounted and running in protect mode. It answered a probe for /.env with a fake file.' });
+          add({ id: 'protect', status: 'pass', message: 'Lurensic is mounted and running in protect mode. It answered a probe for /.env with a fake file.' });
         } else if (env.status === 200) {
           add({
             id: 'protect',
             status: 'fail',
-            message: 'The app serves a real /.env file to anyone. That is a serious leak, and Kagami is not answering for it.',
-            fix: 'Stop serving dotfiles (check static file middleware), rotate every secret in that file, then mount Kagami before your routes.',
+            message: 'The app serves a real /.env file to anyone. That is a serious leak, and Lurensic is not answering for it.',
+            fix: 'Stop serving dotfiles (check static file middleware), rotate every secret in that file, then mount Lurensic before your routes.',
           });
         } else {
           add({
             id: 'protect',
             status: 'info',
-            message: 'Kagami did not answer a probe for /.env. That is expected in observe mode. In protect mode it means the middleware is not mounted before your routes, or bait files are turned off.',
-            fix: 'In protect mode, mount Kagami after the body parsers and before your routes and static files.',
+            message: 'Lurensic did not answer a probe for /.env. That is expected in observe mode. In protect mode it means the middleware is not mounted before your routes, or bait files are turned off.',
+            fix: 'In protect mode, mount Lurensic after the body parsers and before your routes and static files.',
           });
         }
         if (secret.length >= 32) await checkSpec(base, secret, f, add);
@@ -211,11 +211,11 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
           add({
             id: 'client_address',
             status: 'warn',
-            message: `Kagami saw the doctor's requests as coming from ${seen}, a private address. Behind a proxy or load balancer that usually means every visitor looks like the proxy, so one attacker could get everyone contained.`,
-            fix: "Set KAGAMI_PROXY=cloudflare when Cloudflare connects to the app directly, or KAGAMI_PROXY=render on Render. For other proxies set clientAddress: { trustedProxies: ['<your proxy addresses>'] }, and add cloudflare: true behind Cloudflare.",
+            message: `Lurensic saw the doctor's requests as coming from ${seen}, a private address. Behind a proxy or load balancer that usually means every visitor looks like the proxy, so one attacker could get everyone contained.`,
+            fix: "Set LURENSIC_PROXY=cloudflare when Cloudflare connects to the app directly, or LURENSIC_PROXY=render on Render. For other proxies set clientAddress: { trustedProxies: ['<your proxy addresses>'] }, and add cloudflare: true behind Cloudflare.",
           });
         } else {
-          add({ id: 'client_address', status: 'pass', message: `Kagami saw the doctor's requests as coming from ${seen}.` });
+          add({ id: 'client_address', status: 'pass', message: `Lurensic saw the doctor's requests as coming from ${seen}.` });
         }
       }
     }
@@ -224,7 +224,7 @@ export async function runDoctor(o: DoctorOptions = {}): Promise<Check[]> {
   // 5. Enforcement output.
   if (o.blocklist) {
     if (!existsSync(o.blocklist)) {
-      add({ id: 'blocklist', status: 'info', message: `${o.blocklist} does not exist yet. blocklistFile creates it when Kagami starts.`, fix: 'Check that containment is on and blocklistFile points at this path.' });
+      add({ id: 'blocklist', status: 'info', message: `${o.blocklist} does not exist yet. blocklistFile creates it when Lurensic starts.`, fix: 'Check that containment is on and blocklistFile points at this path.' });
     } else {
       try {
         const parsed = JSON.parse(readFileSync(o.blocklist, 'utf8')) as { entries?: unknown[] };

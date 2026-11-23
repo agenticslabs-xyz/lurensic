@@ -1,14 +1,14 @@
 {
   "name": "demo-shop",
   "private": true,
-  "description": "A small Express shop protected by Kagami, used as a target for pentest agents.",
+  "description": "A small Express shop protected by Lurensic, used as a target for pentest agents.",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "dependencies": {
-    "@agenticslabs/kagami-express": "workspace:*",
+    "@agenticslabs/lurensic-express": "workspace:*",
     "express": "^5.1.0"
   }
 }

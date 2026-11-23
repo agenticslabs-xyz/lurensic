@@ -1,16 +1,16 @@
 {
-  "name": "kagami-monorepo",
+  "name": "lurensic-monorepo",
   "private": true,
-  "description": "Kagami is a deception-based defence against AI-driven attacks.",
+  "description": "Lurensic is a deception-based defence against AI-driven attacks.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
-  "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
+  "homepage": "https://github.com/agenticslabs-xyz/lurensic#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agenticslabs-xyz/kagami.git"
+    "url": "git+https://github.com/agenticslabs-xyz/lurensic.git"
   },
   "bugs": {
-    "url": "https://github.com/agenticslabs-xyz/kagami/issues"
+    "url": "https://github.com/agenticslabs-xyz/lurensic/issues"
   },
   "type": "module",
   "packageManager": "pnpm@10.34.1",

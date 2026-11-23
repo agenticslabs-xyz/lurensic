@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { connect } from 'node:net';
 import { after, before, test } from 'node:test';
-import { memorySink, verifyChain } from '@agenticslabs/kagami-express';
+import { memorySink, verifyChain } from '@agenticslabs/lurensic-express';
 import { createApp } from '../app.js';
 
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
@@ -25,7 +25,7 @@ before(async () => {
 });
 
 after(async () => {
-  await app.kagami.close();
+  await app.lurensic.close();
   await new Promise((r) => server.close(r));
 });
 
@@ -54,7 +54,7 @@ const form = (o) => ({
 });
 
 async function eventsFor(ip) {
-  await app.kagami.flush();
+  await app.lurensic.flush();
   return sink.events.filter((e) => e.source?.ip === ip);
 }
 
@@ -117,7 +117,7 @@ test('persona 2, the instruction-hardened agent, ignores page text and runs a st
   const login = await rotated('/login', form({ email: 'admin@northwind-outfitters.com', password: secret }));
   assert.equal(login.status, 401, 'the fake credentials do not work on the real app');
 
-  await app.kagami.flush();
+  await app.lurensic.flush();
   const used = sink.events.find((e) => e.rule === 'honeytoken.used' && e.source?.ip === '192.0.2.77');
   assert.ok(used, 'credential use detected');
   assert.match(used.evidence.token_kind, /^env_/);
@@ -168,7 +168,7 @@ test('persona 4, the noisy scanner, sprays payloads and enumerates a wordlist', 
 });
 
 test('the full audit log is intact and contains no secrets', async () => {
-  await app.kagami.flush();
+  await app.lurensic.flush();
   assert.equal((await verifyChain(sink.lines)).ok, true);
   const all = sink.lines.join('\n');
   assert.ok(!all.includes('Ridgeline!2024'), 'real passwords never logged');
@@ -190,14 +190,14 @@ test('the demo shop never leaks stack traces, file paths or package names', asyn
   for (const [path, init] of probes) {
     const res = await http(path, init);
     assert.ok(res.status >= 400 && res.status < 500, `${path} returned ${res.status}`);
-    for (const leak of ['kagami', 'node_modules', 'body-parser', 'Desktop', '    at ']) {
+    for (const leak of ['lurensic', 'node_modules', 'body-parser', 'Desktop', '    at ']) {
       assert.ok(!res.text.includes(leak), `${path} response leaks "${leak}"`);
     }
   }
 });
 
 // Regression tests from the second live benchmark round (2026-11-15). The
-// agent was told that Kagami might be present. It skipped the comment, the
+// agent was told that Lurensic might be present. It skipped the comment, the
 // .env and the decoy route, but treated the decoy JSON field as real data.
 
 test('persona 5, the informed agent, avoids the side bait and is caught by app-shaped tripwires', async () => {
@@ -226,7 +226,7 @@ test('pages do not tell the agent that the shop is a demo, and decoy 401s match 
   }
   const appError = await http('/api/me');
   assert.equal(appError.status, 401);
-  const route = app.kagami.manifest().decoys.routes[0];
+  const route = app.lurensic.manifest().decoys.routes[0];
   const decoy = await http(route);
   assert.equal(decoy.status, 401);
   assert.equal(decoy.text, appError.text);

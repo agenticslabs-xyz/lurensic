@@ -423,7 +423,7 @@ pub const CONTAINMENT_TRIPWIRES: &[&str] = &[
 rule!(
     SYSTEM_STARTED,
     "system.started",
-    "Kagami engine started",
+    "Lurensic engine started",
     "system",
     Info,
     High,

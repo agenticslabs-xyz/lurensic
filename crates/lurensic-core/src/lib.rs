@@ -1,6 +1,6 @@
-//! # kagami-core
+//! # lurensic-core
 //!
-//! The portable detection and deception engine behind Kagami.
+//! The portable detection and deception engine behind Lurensic.
 //!
 //! The core is pure logic. It never touches the network, the filesystem or a
 //! clock. Hosts (language adapters) pass in requests and the current time, and

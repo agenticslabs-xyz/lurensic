@@ -1,31 +1,31 @@
-# @agenticslabs/kagami
+# @agenticslabs/lurensic
 
-The runtime for [Kagami](https://github.com/agenticslabs-xyz/kagami), a deception-based defence against AI-driven
+The runtime for [Lurensic](https://github.com/agenticslabs-xyz/lurensic), a deception-based defence against AI-driven
 attacks. It runs on Node, Bun, Deno and Cloudflare Workers, and includes the WebAssembly engine, the `onDetect`
 callback, event sinks and the CLI.
 
-With Express, install [`@agenticslabs/kagami-express`](https://www.npmjs.com/package/@agenticslabs/kagami-express).
-With Hono, install [`@agenticslabs/kagami-hono`](https://www.npmjs.com/package/@agenticslabs/kagami-hono). Both bring
-this package with them. [Choose your setup](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/choose-your-setup.md) shows the path for every framework and host.
+With Express, install [`@agenticslabs/lurensic-express`](https://www.npmjs.com/package/@agenticslabs/lurensic-express).
+With Hono, install [`@agenticslabs/lurensic-hono`](https://www.npmjs.com/package/@agenticslabs/lurensic-hono). Both bring
+this package with them. [Choose your setup](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/choose-your-setup.md) shows the path for every framework and host.
 
 ## Any app with a fetch handler
 
 On Cloudflare Workers, Bun and Deno, wrap the app or the handler.
 
 ```js
-import { kagami, kagamiContext } from '@agenticslabs/kagami';
+import { lurensic, lurensicContext } from '@agenticslabs/lurensic';
 
 async function handler(request) {
-  const k = kagamiContext(request);   // seal and verify helpers
+  const k = lurensicContext(request);   // seal and verify helpers
   return new Response('Hello');
 }
 
-export default kagami(handler, {
+export default lurensic(handler, {
   subject: (request) => accountIdFrom(request),   // your id for the sender, optional
   onDetect: (event) => {
     // Your response, such as locking event.subject or blocking event.source.ip.
   },
-});                                   // reads KAGAMI_SECRET, starts in observe mode
+});                                   // reads LURENSIC_SECRET, starts in observe mode
 ```
 
 `onDetect` receives detection and session events at `low` severity and above (`detectSeverity` changes the floor),
@@ -37,10 +37,10 @@ package's `workerd` entry loads the engine the way Workers require. Wrangler pic
 ## Building another adapter
 
 ```js
-import { Kagami, consoleSink } from '@agenticslabs/kagami';
+import { Lurensic, consoleSink } from '@agenticslabs/lurensic';
 
-const kagami = new Kagami({ secret: process.env.KAGAMI_SECRET, sinks: [consoleSink()], onDetect });
-const verdict = kagami.inspect({ ip, method, host, path, query, headers, body, subject });
+const lurensic = new Lurensic({ secret: process.env.LURENSIC_SECRET, sinks: [consoleSink()], onDetect });
+const verdict = lurensic.inspect({ ip, method, host, path, query, headers, body, subject });
 ```
 
 For a framework built on the web-standard Request and Response API, use `FetchGuard`, as the Hono adapter does.
@@ -48,9 +48,9 @@ For a framework built on the web-standard Request and Response API, use `FetchGu
 ## CLI
 
 ```bash
-npx @agenticslabs/kagami secret                    # generate a deployment secret
-npx @agenticslabs/kagami doctor --url http://localhost:3000   # check the setup (add --json for agents)
-npx @agenticslabs/kagami verify-log events.jsonl   # check a log's hash chain
+npx @agenticslabs/lurensic secret                    # generate a deployment secret
+npx @agenticslabs/lurensic doctor --url http://localhost:3000   # check the setup (add --json for agents)
+npx @agenticslabs/lurensic verify-log events.jsonl   # check a log's hash chain
 ```
 
 ## Sinks
@@ -60,18 +60,18 @@ previews disabled), `callbackSink`, `detectSink` (behind `onDetect`) and `memory
 
 ## Optional containment
 
-Most apps act on detections in `onDetect`. Kagami can also act by itself, which is off by default.
+Most apps act on detections in `onDetect`. Lurensic can also act by itself, which is off by default.
 
-With `containment: true`, a machine that trips a tripwire is answered by Kagami (`verdict.action` is a
+With `containment: true`, a machine that trips a tripwire is answered by Lurensic (`verdict.action` is a
 response and `verdict.contained` is true), so an adapter must not pass the request on to the application.
-Adapters should also pass response headers and bodies to `kagami.response()` when `verdict.capture` is true,
+Adapters should also pass response headers and bodies to `lurensic.response()` when `verdict.capture` is true,
 so contained machines can be served copies of public pages.
 
 Enforcers receive each newly contained machine, off the request path. The package includes
 `blocklistFile` (plain, nginx or JSON, written atomically, kept across restarts), `webhookEnforcer`
 (HMAC-signed) and `callbackEnforcer`. Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in
-[Blocking at your firewall or CDN](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/firewall.md). Write your own by implementing the `Enforcer` interface.
-`kagami.contained()` lists contained machines and `kagami.release(ip)` ends a containment early.
+[Blocking at your firewall or CDN](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/firewall.md). Write your own by implementing the `Enforcer` interface.
+`lurensic.contained()` lists contained machines and `lurensic.release(ip)` ends a containment early.
 
 ## The store
 
@@ -79,13 +79,13 @@ Contained machines live in each running copy's memory. Pass the key-value store 
 containment through restarts and across every copy of the app.
 
 ```js
-kagami(app, { containment: true, store: redis });   // Workers KV, Deno KV, Netlify Blobs or a Redis client
+lurensic(app, { containment: true, store: redis });   // Workers KV, Deno KV, Netlify Blobs or a Redis client
 ```
 
-On Cloudflare Workers a KV binding named `KAGAMI_STORE` is used without any code. See [the store](https://github.com/agenticslabs-xyz/kagami/blob/main/docs/guides/choose-your-setup.md#the-store).
+On Cloudflare Workers a KV binding named `LURENSIC_STORE` is used without any code. See [the store](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/choose-your-setup.md#the-store).
 
 `fileSink` and `blocklistFile` need a file system, so they are not available on Cloudflare Workers.
 
-The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/kagami
+The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/lurensic
 
 Apache-2.0. Copyright [Agentics Labs](https://agenticslabs.xyz).

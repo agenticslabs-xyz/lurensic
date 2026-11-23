@@ -1,28 +1,28 @@
 /**
- * Kagami for Hono, on Node, Bun, Deno and Cloudflare Workers.
+ * Lurensic for Hono, on Node, Bun, Deno and Cloudflare Workers.
  *
  *   import { Hono } from 'hono';
- *   import { kagami } from '@agenticslabs/kagami-hono';
+ *   import { lurensic } from '@agenticslabs/lurensic-hono';
  *
  *   const app = new Hono();
- *   app.use(kagami());          // reads KAGAMI_SECRET, starts in observe mode
+ *   app.use(lurensic());          // reads LURENSIC_SECRET, starts in observe mode
  *
  * Register it before your routes. Every code path fails open. If anything
- * inside Kagami goes wrong, the request continues to your app untouched.
+ * inside Lurensic goes wrong, the request continues to your app untouched.
  */
 import type { MiddlewareHandler } from 'hono';
-import { FetchGuard, type FetchAdapterOptions, type Kagami, type KagamiContext } from '@agenticslabs/kagami';
+import { FetchGuard, type FetchAdapterOptions, type Lurensic, type LurensicContext } from '@agenticslabs/lurensic';
 
-export * from '@agenticslabs/kagami';
+export * from '@agenticslabs/lurensic';
 
-/** Add to your app's type, `new Hono<{ Variables: KagamiVariables }>()`, to type `c.get('kagami')`. */
-export type KagamiVariables = { kagami: KagamiContext };
+/** Add to your app's type, `new Hono<{ Variables: LurensicVariables }>()`, to type `c.get('lurensic')`. */
+export type LurensicVariables = { lurensic: LurensicContext };
 
-export type KagamiHonoOptions = FetchAdapterOptions;
+export type LurensicHonoOptions = FetchAdapterOptions;
 
-export type KagamiMiddleware = MiddlewareHandler & { readonly kagami: Kagami };
+export type LurensicMiddleware = MiddlewareHandler & { readonly lurensic: Lurensic };
 
-export function kagami(options: KagamiHonoOptions = {}): KagamiMiddleware {
+export function lurensic(options: LurensicHonoOptions = {}): LurensicMiddleware {
   const guard = new FetchGuard(options);
   const middleware: MiddlewareHandler = async (c, next) => {
     let waitUntil: ((p: Promise<unknown>) => void) | undefined;
@@ -39,7 +39,7 @@ export function kagami(options: KagamiHonoOptions = {}): KagamiMiddleware {
       async () => {
         try {
           const ctx = guard.context(c.req.raw);
-          if (ctx) c.set('kagami' as never, ctx as never);
+          if (ctx) c.set('lurensic' as never, ctx as never);
         } catch {
           /* fail open */
         }
@@ -59,8 +59,8 @@ export function kagami(options: KagamiHonoOptions = {}): KagamiMiddleware {
     }
     return undefined;
   };
-  Object.defineProperty(middleware, 'kagami', { get: () => guard.kagami(), enumerable: false });
-  return middleware as KagamiMiddleware;
+  Object.defineProperty(middleware, 'lurensic', { get: () => guard.lurensic(), enumerable: false });
+  return middleware as LurensicMiddleware;
 }
 
-export default kagami;
+export default lurensic;

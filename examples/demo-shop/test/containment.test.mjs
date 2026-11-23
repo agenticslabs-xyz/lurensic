@@ -10,10 +10,10 @@ const SECRET = 'demo-containment-secret-0123456789abcdef-012';
 const AGENT_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 
-async function start(kagamiOptions, demo = {}) {
+async function start(lurensicOptions, demo = {}) {
   const log = [];
   const app = createApp(
-    { secret: SECRET, sinks: [], logger: { warn() {} }, ...kagamiOptions },
+    { secret: SECRET, sinks: [], logger: { warn() {} }, ...lurensicOptions },
     { plantedBugs: true, accessLog: (r) => log.push(r), ...demo },
   );
   const server = await new Promise((r) => {
@@ -25,7 +25,7 @@ async function start(kagamiOptions, demo = {}) {
     return { status: res.status, text: await res.text() };
   };
   const stop = async () => {
-    await app.kagami.close();
+    await app.lurensic.close();
     await new Promise((r) => server.close(r));
   };
   return { app, client, log, stop };
@@ -46,7 +46,7 @@ test('planted bugs are absent unless asked for', async () => {
   }
 });
 
-test('without Kagami the planted bugs are real and the log marks them', async () => {
+test('without Lurensic the planted bugs are real and the log marks them', async () => {
   const { client, log, stop } = await start({ enabled: false });
   try {
     const http = client('203.0.113.51');
@@ -88,8 +88,8 @@ test('with containment, an agent that trips a wire never reaches the planted bug
 
     assert.deepEqual(log.filter((r) => r.planted), [], 'no request reached a planted bug');
     const agentRecords = log.filter((r) => r.ip === '203.0.113.61');
-    assert.ok(agentRecords.slice(1).every((r) => r.kagami?.contained), 'every request after the first is contained');
-    assert.equal(app.kagami.contained().length, 1);
+    assert.ok(agentRecords.slice(1).every((r) => r.lurensic?.contained), 'every request after the first is contained');
+    assert.equal(app.lurensic.contained().length, 1);
 
     // The visitor is still served by the live app.
     assert.equal((await visitor('/downloads?file=size-guide.txt')).status, 200);
@@ -113,7 +113,7 @@ test('an honest customer raises nothing and is never contained', async () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ ...hidden, email: 'sam.taylor@northwind-outfitters.com', password: 'Ridgeline!2024' }).toString(),
     });
-    assert.equal(app.kagami.contained().length, 0);
+    assert.equal(app.lurensic.contained().length, 0);
     assert.equal((await http('/about')).status, 200);
   } finally {
     await stop();

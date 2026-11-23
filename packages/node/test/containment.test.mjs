@@ -8,11 +8,11 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { blocklistFile, callbackEnforcer, formatBlocklist, Kagami, webhookEnforcer } from '../dist/index.js';
+import { blocklistFile, callbackEnforcer, formatBlocklist, Lurensic, webhookEnforcer } from '../dist/index.js';
 
 const SECRET = 'containment-test-secret-0123456789abcdef-01';
 const quiet = { warn() {} };
-const dir = mkdtempSync(join(tmpdir(), 'kagami-contain-'));
+const dir = mkdtempSync(join(tmpdir(), 'lurensic-contain-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
 const request = (ip, query = '', path = '/api/products') => ({
@@ -25,7 +25,7 @@ const request = (ip, query = '', path = '/api/products') => ({
 });
 
 function guard(extra = {}) {
-  const k = new Kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet, ...extra });
+  const k = new Lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet, ...extra });
   const field = k.manifest().decoys.json_field;
   return { k, trip: (ip) => k.inspect(request(ip, `${field}=admin`)) };
 }
@@ -60,7 +60,7 @@ test('private addresses never reach edge enforcers unless asked for', async () =
   await k.flush();
   assert.deepEqual(edge, [], 'nothing private is pushed out');
   assert.deepEqual(lan.map((m) => m.target).sort(), ['10.1.2.3', '127.0.0.1']);
-  assert.equal(k.inspect(request('10.1.2.3', '', '/')).contained, true, 'Kagami itself still contains it');
+  assert.equal(k.inspect(request('10.1.2.3', '', '/')).contained, true, 'Lurensic itself still contains it');
   await k.close();
 });
 
@@ -95,7 +95,7 @@ test('a failing enforcer never affects requests or other enforcers', async () =>
 
 test('enforcers without containment produce a clear warning', async () => {
   const warnings = [];
-  const k = new Kagami({ secret: SECRET, mode: 'protect', sinks: [], enforcers: [callbackEnforcer(() => {})], logger: { warn: (m) => warnings.push(m) } });
+  const k = new Lurensic({ secret: SECRET, mode: 'protect', sinks: [], enforcers: [callbackEnforcer(() => {})], logger: { warn: (m) => warnings.push(m) } });
   assert.match(warnings.join('\n'), /containment is off/);
   await k.close();
 });
@@ -178,7 +178,7 @@ test('webhookEnforcer signs its payload and reports releases', async () => {
     let body = '';
     req.on('data', (d) => (body += d));
     req.on('end', () => {
-      received.push({ body, sig: req.headers['kagami-signature'] });
+      received.push({ body, sig: req.headers['lurensic-signature'] });
       res.writeHead(204).end();
     });
   });

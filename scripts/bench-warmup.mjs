@@ -1,11 +1,11 @@
 // An honest visitor for the start of a benchmark round. A live site always has
-// visitors, and Kagami's shadow learns public pages and the app's answer to a
+// visitors, and Lurensic's shadow learns public pages and the app's answer to a
 // failed form post from them. Without this, the shadow would only know what
 // the attacker itself fetched before it was contained.
 //
 // The visitor follows the links and submits the forms the site's own pages
 // show, from the home page. It never reads HTML comments, so it never meets
-// Kagami's bait, and it sends hidden form fields back unchanged, as a browser
+// Lurensic's bait, and it sends hidden form fields back unchanged, as a browser
 // does. Every request carries the header X-Bench-Warmup, which the report uses
 // to leave these requests out of the round.
 

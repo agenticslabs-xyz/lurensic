@@ -1,12 +1,12 @@
 /**
- * The framework-agnostic Kagami guard. Framework adapters (Express, Hono,
+ * The framework-agnostic Lurensic guard. Framework adapters (Express, Hono,
  * Fastify, ...) translate their request objects into `HttpRequest` and call
  * `inspect` / `response` / `decorate*`.
  *
  * Fail-open is a hard rule. No public method throws, and any internal fault
  * results in the request passing through untouched.
  */
-import { Core, KagamiCoreError } from './core.js';
+import { Core, LurensicCoreError } from './core.js';
 import { EnforcerPipeline } from './enforce.js';
 import { describeClientAddress, resolveClientAddress } from './address.js';
 import { BUILD_ID, PACKAGE_VERSION } from './build-info.js';
@@ -16,10 +16,10 @@ import { parseStored, storeDriver, storeEnforcer, storeKey, withTimeout, type St
 
 /** How long a machine's store lookup is remembered before it is checked again. */
 const STORE_RECHECK_MS = 60_000;
-/** How long a request waits for the store before Kagami carries on without it. */
+/** How long a request waits for the store before Lurensic carries on without it. */
 const STORE_TIMEOUT_MS = 300;
 const STORE_CACHE_MAX = 10_000;
-import type { ContainedMachine, Enforcer, HttpRequest, KagamiOptions, KagamiStats, Mode, ResponseSample, Verdict } from './types.js';
+import type { ContainedMachine, Enforcer, HttpRequest, LurensicOptions, LurensicStats, Mode, ResponseSample, Verdict } from './types.js';
 
 const PASS: Omit<Verdict, 'session' | 'source'> = {
   score: 0,
@@ -81,21 +81,21 @@ function sampleHeaders(headers: Array<[string, string]>): Array<[string, string]
   return out;
 }
 
-/** KAGAMI_CONTAINMENT is on, true, 1, shadow or block. Anything else leaves containment off. */
-function envContainment(env: Env): KagamiOptions['containment'] {
-  const v = env.KAGAMI_CONTAINMENT?.trim().toLowerCase() ?? '';
+/** LURENSIC_CONTAINMENT is on, true, 1, shadow or block. Anything else leaves containment off. */
+function envContainment(env: Env): LurensicOptions['containment'] {
+  const v = env.LURENSIC_CONTAINMENT?.trim().toLowerCase() ?? '';
   if (v === 'shadow' || v === 'block') return { action: v };
   return ['on', 'true', '1', 'yes'].includes(v) ? true : undefined;
 }
 
 /**
- * KAGAMI_DECOYS turns on the opt-in decoys from the environment, as a list
+ * LURENSIC_DECOYS turns on the opt-in decoys from the environment, as a list
  * such as `json,forms,spec` or `all`. Settings in code take precedence.
  */
-function envDecoys(env: Env): NonNullable<KagamiOptions['decoys']> {
-  const names = (env.KAGAMI_DECOYS ?? '').toLowerCase().split(/[\s,]+/).filter(Boolean);
+function envDecoys(env: Env): NonNullable<LurensicOptions['decoys']> {
+  const names = (env.LURENSIC_DECOYS ?? '').toLowerCase().split(/[\s,]+/).filter(Boolean);
   const all = names.includes('all');
-  const out: NonNullable<KagamiOptions['decoys']> = {};
+  const out: NonNullable<LurensicOptions['decoys']> = {};
   if (all || names.includes('json')) out.json = true;
   if (all || names.includes('forms')) out.forms = true;
   if (all || names.includes('spec')) out.spec = true;
@@ -107,7 +107,7 @@ function envFlag(env: Env, name: string): boolean {
   return v === '1' || v === 'true' || v === 'yes';
 }
 
-function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<string, unknown> {
+function buildCoreConfig(o: LurensicOptions, secret: string, mode: Mode): Record<string, unknown> {
   const cfg: Record<string, unknown> = { secret, mode };
   const d = o.decoys ?? {};
   if (d.html !== undefined) cfg.html_decoys = d.html;
@@ -156,12 +156,12 @@ function buildCoreConfig(o: KagamiOptions, secret: string, mode: Mode): Record<s
   return cfg;
 }
 
-export class Kagami {
+export class Lurensic {
   readonly mode: Mode;
   readonly maxBodyBytes: number;
   /**
-   * True when Kagami works out the visitor's address itself, from the
-   * `clientAddress` option, `KAGAMI_PROXY` or the automatic Render setting.
+   * True when Lurensic works out the visitor's address itself, from the
+   * `clientAddress` option, `LURENSIC_PROXY` or the automatic Render setting.
    * Adapters then pass the connection's address as `peer`.
    */
   readonly resolvesClientAddress: boolean;
@@ -189,7 +189,7 @@ export class Kagami {
   private storeErrors = 0;
   private lastStoreWarn = 0;
 
-  constructor(options: KagamiOptions = {}) {
+  constructor(options: LurensicOptions = {}) {
     const logger = options.logger ?? console;
     this.warn = (m) => {
       try {
@@ -199,14 +199,14 @@ export class Kagami {
       }
     };
     const env = options.env ?? processEnv();
-    const envMode = env.KAGAMI_MODE;
+    const envMode = env.LURENSIC_MODE;
     this.mode = options.mode ?? (envMode === 'protect' || envMode === 'observe' ? envMode : 'observe');
     this.maxBodyBytes = options.maxBodyBytes ?? 16 * 1024;
     this.instanceId = options.instanceId ?? randomHex(6);
     const sinks = [...(options.sinks ?? [consoleSink()])];
     if (typeof options.onDetect === 'function') sinks.push(detectSink(options.onDetect, options.detectSeverity));
     this.pipeline = new Pipeline(sinks, this.warn);
-    this.enabled = options.enabled !== false && !envFlag(env, 'KAGAMI_DISABLED');
+    this.enabled = options.enabled !== false && !envFlag(env, 'LURENSIC_DISABLED');
     // Containment, decoys, the site and the address setting can come from the
     // environment as well, so a deployment can be configured without code changes.
     const address = resolveClientAddress(options.clientAddress, env, this.warn);
@@ -215,42 +215,42 @@ export class Kagami {
       ...options,
       containment: options.containment ?? envContainment(env),
       decoys: { ...envDecoys(env), ...options.decoys },
-      site: options.site ?? env.KAGAMI_SITE,
+      site: options.site ?? env.LURENSIC_SITE,
       clientAddress: address.setting,
     };
     if (options.store !== undefined && options.store !== null) {
       try {
         this.store = storeDriver(options.store);
       } catch (err) {
-        this.warn(`[kagami] The store is not used. ${(err as Error)?.message ?? err}`);
+        this.warn(`[lurensic] The store is not used. ${(err as Error)?.message ?? err}`);
       }
       if (this.store && !options.containment) {
-        this.warn('[kagami] A store is set but containment is off, so nothing is stored. Set `containment: true` or KAGAMI_CONTAINMENT=on.');
+        this.warn('[lurensic] A store is set but containment is off, so nothing is stored. Set `containment: true` or LURENSIC_CONTAINMENT=on.');
       }
     }
-    // Enforcers only start when Kagami runs, so the kill switch also stops them.
+    // Enforcers only start when Lurensic runs, so the kill switch also stops them.
     const enforcers = this.enabled ? [...(options.enforcers ?? []), ...(this.store ? [storeEnforcer(this.store)] : [])] : [];
     this.enforcement = new EnforcerPipeline(enforcers, this.warn);
     if ((options.enforcers?.length ?? 0) > 0 && !options.containment) {
-      this.warn('[kagami] Enforcers are configured but containment is off, so they will receive nothing. Set `containment: true` or KAGAMI_CONTAINMENT=on.');
+      this.warn('[lurensic] Enforcers are configured but containment is off, so they will receive nothing. Set `containment: true` or LURENSIC_CONTAINMENT=on.');
     }
     if (!this.enabled) return;
 
-    let secret = options.secret ?? env.KAGAMI_SECRET ?? '';
+    let secret = options.secret ?? env.LURENSIC_SECRET ?? '';
     if (!secret) {
       // A temporary secret is only for local development. In production, and
       // on runtimes without a process such as Cloudflare Workers, where every
-      // copy of the app would get a different secret, Kagami stays off instead.
+      // copy of the app would get a different secret, Lurensic stays off instead.
       if (env.NODE_ENV === 'production' || !hasProcess()) {
         this.warn(
-          '[kagami] KAGAMI_SECRET is not set, so Kagami is disabled and requests pass through untouched. ' +
-            'Generate a secret with `npx @agenticslabs/kagami secret`.',
+          '[lurensic] LURENSIC_SECRET is not set, so Lurensic is disabled and requests pass through untouched. ' +
+            'Generate a secret with `npx @agenticslabs/lurensic secret`.',
         );
         this.enabled = false;
         return;
       }
       secret = randomHex(32);
-      this.warn('[kagami] No KAGAMI_SECRET set. Using a temporary development secret, so decoys change on every restart.');
+      this.warn('[lurensic] No LURENSIC_SECRET set. Using a temporary development secret, so decoys change on every restart.');
     }
     this.coreConfig = buildCoreConfig(options, secret, this.mode);
     try {
@@ -263,7 +263,7 @@ export class Kagami {
         : 'Containment is off.';
       try {
         info?.(
-          `[kagami] Kagami ${PACKAGE_VERSION} (build ${BUILD_ID}) started in ${this.mode} mode. ` +
+          `[lurensic] Lurensic ${PACKAGE_VERSION} (build ${BUILD_ID}) started in ${this.mode} mode. ` +
             `${describeClientAddress(address)} ${containment}`,
         );
       } catch {
@@ -271,8 +271,8 @@ export class Kagami {
       }
     } catch (err) {
       this.enabled = false;
-      const msg = err instanceof KagamiCoreError ? err.message : String(err);
-      this.warn(`[kagami] Kagami is disabled and requests pass through untouched. ${msg}`);
+      const msg = err instanceof LurensicCoreError ? err.message : String(err);
+      this.warn(`[lurensic] Lurensic is disabled and requests pass through untouched. ${msg}`);
     }
   }
 
@@ -316,7 +316,7 @@ export class Kagami {
     const now = Date.now();
     if (now - this.lastFaultWarn > 60_000) {
       this.lastFaultWarn = now;
-      this.warn(`[kagami] Internal error. The request passed through untouched. ${(err as Error)?.message ?? err}`);
+      this.warn(`[lurensic] Internal error. The request passed through untouched. ${(err as Error)?.message ?? err}`);
     }
   }
 
@@ -408,7 +408,7 @@ export class Kagami {
       this.storeErrors++;
       if (Date.now() - this.lastStoreWarn > 60_000) {
         this.lastStoreWarn = Date.now();
-        this.warn(`[kagami] Reading the store failed, so this request was checked against this instance's memory only. ${(err as Error)?.message ?? err}`);
+        this.warn(`[lurensic] Reading the store failed, so this request was checked against this instance's memory only. ${(err as Error)?.message ?? err}`);
       }
     }
   }
@@ -443,7 +443,7 @@ export class Kagami {
   }
 
   /**
-   * True until Kagami has seen one of the app's own JSON 401 responses. While
+   * True until Lurensic has seen one of the app's own JSON 401 responses. While
    * it is true, adapters pass the body of 401 responses to `response`, and
    * decoy routes then answer 401 with the same body as the app.
    */
@@ -511,7 +511,7 @@ export class Kagami {
   /**
    * Seal a server-issued value (an ID, a price, a role) before handing it to a
    * client. Seals are authenticated with the deployment secret, so a client
-   * can read them but cannot change them. When Kagami is disabled the value is
+   * can read them but cannot change them. When Lurensic is disabled the value is
    * returned unchanged and `verify` accepts plain values.
    */
   seal(value: string | number): string {
@@ -593,7 +593,7 @@ export class Kagami {
     }
   }
 
-  stats(): KagamiStats {
+  stats(): LurensicStats {
     return {
       enabled: this.enabled,
       mode: this.mode,

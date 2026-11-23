@@ -1,5 +1,5 @@
 /**
- * Verify a Kagami event log's hash chain (see docs/DESIGN.md#audit-log).
+ * Verify a Lurensic event log's hash chain (see docs/DESIGN.md#audit-log).
  * Works on the raw JSON lines exactly as written by the sinks.
  */
 import { sha256Hex } from './platform.js';

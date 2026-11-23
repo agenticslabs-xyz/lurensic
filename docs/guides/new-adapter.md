@@ -1,18 +1,18 @@
 # Writing an adapter
 
-An adapter brings Kagami to a new language or framework. All detection, deception and containment logic lives in the
+An adapter brings Lurensic to a new language or framework. All detection, deception and containment logic lives in the
 shared engine, so an adapter only moves data in and out. The Express adapter is about 250 lines.
 
 ```mermaid
 flowchart LR
     F["Framework request"] --> AD["Adapter<br/>maps request and response"]
     AD --> RT["Language runtime<br/>loads the WebAssembly engine,<br/>fails open, runs sinks and enforcers"]
-    RT --> CORE["kagami-core.wasm<br/>same file in every language"]
+    RT --> CORE["lurensic-core.wasm<br/>same file in every language"]
 ```
 
 Two layers are needed per language.
 
-1. **A runtime**, once per language, such as `@agenticslabs/kagami` for Node. It loads `kagami_core.wasm`, calls it
+1. **A runtime**, once per language, such as `@agenticslabs/lurensic` for Node. It loads `lurensic_core.wasm`, calls it
    through the JSON envelope ABI ([DESIGN section 4.1](../DESIGN.md#41-core-abi-v1)), fails open on every error, and
    runs event sinks and enforcers off the request path. Python can use wasmtime, Go wazero, Java Chicory and .NET
    wasmtime.
@@ -28,7 +28,7 @@ For every request the adapter does the following.
    truncated), the app's id for the sender as `subject` when the developer supplies a function for it, and the connection's raw peer address as `peer`. Let the engine resolve the client address from `peer`
    and the headers. Do not resolve it yourself unless the framework already does so safely.
 2. **Act on the verdict.**
-   - `action.type == "respond"` means Kagami answers. Send its status, headers and body, and do not run the
+   - `action.type == "respond"` means Lurensic answers. Send its status, headers and body, and do not run the
      application. This covers decoys, bait files and containment.
    - `delay_ms` above zero means wait that long first (the tarpit).
 3. **Decorate** HTML and JSON response bodies when `decorate_html` or `decorate_json` is set, by calling
@@ -38,11 +38,11 @@ For every request the adapter does the following.
    decoration, to `response`. Always pass the status, even without a body.
 5. **Hand off** `events` to the sinks and `contain` entries to the enforcers, outside the request path.
 
-Also provide `seal` and `verify` to the application, a kill switch (`KAGAMI_DISABLED`), and a way to read the
+Also provide `seal` and `verify` to the application, a kill switch (`LURENSIC_DISABLED`), and a way to read the
 contained list and release a machine.
 
 Frameworks built on the web-standard Request and Response API need no new runtime. Use `FetchGuard` from
-`@agenticslabs/kagami`, as the Hono adapter does in about 60 lines. It handles the request, the client address, the
+`@agenticslabs/lurensic`, as the Hono adapter does in about 60 lines. It handles the request, the client address, the
 store and the response decoration.
 
 The runtime should offer the same provider-neutral enforcers as the Node runtime, a blocklist file, a signed webhook
@@ -58,7 +58,7 @@ an error handler that ships with the middleware.
 
 Port the Express adapter's suites (`packages/express/test`). They cover the following.
 
-- **Byte identity.** In observe mode every response is byte for byte the same as without Kagami.
+- **Byte identity.** In observe mode every response is byte for byte the same as without Lurensic.
 - **Fail open.** A broken configuration or an engine fault lets requests through.
 - **Decoration.** Only full HTML documents and JSON objects are changed.
 - **Seals.** A forged ID is rejected and reported.
@@ -66,4 +66,4 @@ Port the Express adapter's suites (`packages/express/test`). They cover the foll
 - **Absolute-form targets.** `GET http://host/path` gets exactly the same response as `GET /path`.
 - **Containment.** After a tripwire the application's handlers never run for that machine, and a forged
   `CF-Connecting-IP` or `X-Forwarded-For` decides nothing.
-- **Doctor.** `kagami doctor` passes against a correct setup and never gets its own machine contained.
+- **Doctor.** `lurensic doctor` passes against a correct setup and never gets its own machine contained.

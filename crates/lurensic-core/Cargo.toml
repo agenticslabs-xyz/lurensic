@@ -1,6 +1,6 @@
 [package]
-name = "kagami-core"
-description = "Portable detection and deception engine for Kagami. Compiles to WebAssembly so every language adapter shares one implementation."
+name = "lurensic-core"
+description = "Portable detection and deception engine for Lurensic. Compiles to WebAssembly so every language adapter shares one implementation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

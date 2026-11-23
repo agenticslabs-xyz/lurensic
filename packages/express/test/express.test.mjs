@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
-import { kagami, memorySink } from '../dist/index.js';
+import { lurensic, memorySink } from '../dist/index.js';
 
 const SECRET = 'express-test-secret-0123456789abcdef-012345';
 const quiet = { warn() {} };
@@ -18,9 +18,9 @@ function buildApp(middleware) {
   app.get('/api/me', (_req, res) => res.json({ id: 7, email: 'alice@example.com' }));
   app.get('/search', (req, res) => res.send(`<p>Results for ${String(req.query.q ?? '').replace(/[<>&]/g, '')}</p>`));
   app.post('/login', (req, res) => res.status(req.body?.password === 'correct-horse' ? 200 : 401).json({ ok: true }));
-  app.get('/orders', (req, res) => res.json({ orders: [req.kagami ? req.kagami.seal(1043) : '1043'] }));
+  app.get('/orders', (req, res) => res.json({ orders: [req.lurensic ? req.lurensic.seal(1043) : '1043'] }));
   app.get('/orders/:id', (req, res) => {
-    const id = req.kagami ? req.kagami.verify(req.params.id, 'order_id') : req.params.id;
+    const id = req.lurensic ? req.lurensic.verify(req.params.id, 'order_id') : req.params.id;
     if (id === null) return res.status(404).json({ error: 'not found' });
     res.json({ id });
   });
@@ -50,10 +50,10 @@ const ATTACKS = [
   ['/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"user":"admin","password":{"$ne":null}}' }],
 ];
 
-test('in observe mode every response is byte-identical to the app without Kagami', async () => {
+test('in observe mode every response is byte-identical to the app without Lurensic', async () => {
   const mem = memorySink();
   const plain = await listen(buildApp());
-  const guarded = await listen(buildApp(kagami({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet })));
+  const guarded = await listen(buildApp(lurensic({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet })));
   try {
     for (const [path, init] of ATTACKS) {
       const a = await fetchRaw(plain.base, path, init);
@@ -71,7 +71,7 @@ test('in observe mode every response is byte-identical to the app without Kagami
 });
 
 test('protect mode serves bait files and adds HTML and JSON decoys', async () => {
-  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, sinks: [], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, sinks: [], logger: quiet });
   const app = await listen(buildApp(mw));
   try {
     const env = await fetchRaw(app.base, '/.env');
@@ -80,18 +80,18 @@ test('protect mode serves bait files and adds HTML and JSON decoys', async () =>
     assert.match(env.body, /^(SMTP_PASS=|STRIPE_SECRET_KEY=sk_live_|DATABASE_URL=postgres:\/\/[^:]+:)[A-Za-z0-9]{24}/m);
     const aws = await fetchRaw(app.base, '/.aws/credentials');
     assert.match(aws.body, /^aws_access_key_id = AKIA[A-Z2-7]{16}$/m);
-    assert.equal(env.headers['x-powered-by'], 'Express', 'bait goes through the app like any response (no Kagami fingerprint)');
+    assert.equal(env.headers['x-powered-by'], 'Express', 'bait goes through the app like any response (no Lurensic fingerprint)');
 
     const home = await fetchRaw(app.base, '/');
     assert.match(home.body, /<!-- .*sk_live_[A-Za-z0-9]{24}.* -->/);
     assert.ok(home.body.startsWith('<!doctype html>') && home.body.endsWith('</html>'));
-    assert.ok(!Object.keys(home.headers).some((h) => h.includes('kagami')), 'no Kagami headers');
+    assert.ok(!Object.keys(home.headers).some((h) => h.includes('lurensic')), 'no Lurensic headers');
 
     const fragment = await fetchRaw(app.base, '/search?q=boots');
     assert.equal(fragment.body, '<p>Results for boots</p>', 'non-documents are never modified');
 
     const me = await fetchRaw(app.base, '/api/me');
-    const field = mw.kagami.manifest().decoys.json_field;
+    const field = mw.lurensic.manifest().decoys.json_field;
     assert.ok(field in JSON.parse(me.body));
   } finally {
     await app.close();
@@ -100,7 +100,7 @@ test('protect mode serves bait files and adds HTML and JSON decoys', async () =>
 
 test('seal helpers reject and flag tampered IDs', async () => {
   const mem = memorySink();
-  const app = await listen(buildApp(kagami({ secret: SECRET, sinks: [mem], logger: quiet })));
+  const app = await listen(buildApp(lurensic({ secret: SECRET, sinks: [mem], logger: quiet })));
   try {
     const { orders } = JSON.parse((await fetchRaw(app.base, '/orders')).body);
     const ok = await fetchRaw(app.base, `/orders/${encodeURIComponent(orders[0])}`);
@@ -119,8 +119,8 @@ async function settle() {
 }
 
 test('fails open if the engine misbehaves', async () => {
-  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
-  mw.kagami.inspect = () => {
+  const mw = lurensic({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
+  mw.lurensic.inspect = () => {
     throw new Error('engine exploded');
   };
   const app = await listen(buildApp(mw));
@@ -135,7 +135,7 @@ test('fails open if the engine misbehaves', async () => {
 
 test('brute force and enumeration are detected from response codes', async () => {
   const mem = memorySink();
-  const app = await listen(buildApp(kagami({ secret: SECRET, sinks: [mem], logger: quiet })));
+  const app = await listen(buildApp(lurensic({ secret: SECRET, sinks: [mem], logger: quiet })));
   try {
     for (let i = 0; i < 10; i++) {
       await fetchRaw(app.base, '/login', {
@@ -160,7 +160,7 @@ test('brute force and enumeration are detected from response codes', async () =>
 test('requests rejected by the body parser are still inspected', async () => {
   const mem = memorySink();
   const plain = await listen(buildApp());
-  const guarded = await listen(buildApp(kagami({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet })));
+  const guarded = await listen(buildApp(lurensic({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet })));
   const broken = [
     { headers: { 'content-type': 'application/json' }, body: '{"email":"x\' OR 1=1--","password":' },
     { headers: { 'content-type': 'application/json; charset=latin1' }, body: '{"email":"a@b.c"}' },
@@ -182,10 +182,10 @@ test('requests rejected by the body parser are still inspected', async () => {
 });
 
 test('protect mode answers decoy routes even when the body is malformed', async () => {
-  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
   const app = await listen(buildApp(mw));
   try {
-    const route = mw.kagami.manifest().decoys.routes[0];
+    const route = mw.lurensic.manifest().decoys.routes[0];
     const res = await fetchRaw(app.base, route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"a":' });
     assert.equal(res.status, 401);
     assert.match(res.body, /unauthorized/);
@@ -197,18 +197,18 @@ test('protect mode answers decoy routes even when the body is malformed', async 
 // Regression tests from the second live benchmark round (2026-11-15).
 
 test('decoy routes answer 401 with the body the app uses for its own 401s', async () => {
-  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
   const app = express();
   app.use(mw);
   app.get('/api/account', (_req, res) => res.status(401).json({ message: 'Login required', status: 401 }));
   const server = await listen(app);
   try {
-    const route = mw.kagami.manifest().decoys.routes[0];
+    const route = mw.lurensic.manifest().decoys.routes[0];
     const before = await fetchRaw(server.base, route);
     assert.equal(before.body, '{"error":"unauthorized"}');
     assert.equal((await fetchRaw(server.base, '/api/account')).status, 401);
     await new Promise((r) => setTimeout(r, 20));
-    assert.equal(mw.kagami.wants401Body, false);
+    assert.equal(mw.lurensic.wants401Body, false);
     const after = await fetchRaw(server.base, route);
     assert.equal(after.status, 401);
     assert.equal(after.body, '{"message":"Login required","status":401}');
@@ -220,7 +220,7 @@ test('decoy routes answer 401 with the body the app uses for its own 401s', asyn
 
 test('form decoys add a hidden field to POST forms and catch an edited value', async () => {
   const mem = memorySink();
-  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { forms: true }, sinks: [mem], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { forms: true }, sinks: [mem], logger: quiet });
   const app = express();
   app.use(express.urlencoded({ extended: false }));
   app.use(mw);
@@ -236,7 +236,7 @@ test('form decoys add a hidden field to POST forms and catch an edited value', a
       fetchRaw(server.base, '/signup', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': ua }, body });
     await post(`${name}=${value}&email=a%40b.c`, 'browser');
     await post(`${name}=admin&email=a%40b.c`, 'agent');
-    await mw.kagami.flush();
+    await mw.lurensic.flush();
     const hits = mem.events.filter((e) => e.rule === 'decoy.param');
     assert.deepEqual(hits.map((e) => e.source.user_agent), ['agent'], 'only the edited value is a detection');
   } finally {
@@ -248,7 +248,7 @@ test('form decoys add a hidden field to POST forms and catch an edited value', a
 
 test('a contained machine never reaches the application handlers', async () => {
   const hits = { home: 0, login: 0, search: 0 };
-  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet });
   const app = express();
   app.set('trust proxy', 'loopback');
   app.use(express.urlencoded({ extended: false }));
@@ -277,7 +277,7 @@ test('a contained machine never reaches the application handlers', async () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const attacker = as('203.0.113.77');
-    const field = mw.kagami.manifest().decoys.json_field;
+    const field = mw.lurensic.manifest().decoys.json_field;
     const trip = await attacker(`/api/products?${field}=admin`);
     assert.equal(trip.status, 404, 'the tripping request is answered by the shadow');
     const before = { ...hits };
@@ -292,25 +292,25 @@ test('a contained machine never reaches the application handlers', async () => {
 
     await visitor('/');
     assert.equal(hits.home, before.home + 1, 'other visitors are unaffected');
-    assert.equal(mw.kagami.contained().length, 1);
+    assert.equal(mw.lurensic.contained().length, 1);
   } finally {
     await server.close();
-    await mw.kagami.close();
+    await mw.lurensic.close();
   }
 });
 
 test('block containment answers 403 and observe mode never contains', async () => {
   for (const [mode, expected] of [['protect', 403], ['observe', 200]]) {
-    const mw = kagami({ secret: SECRET, mode, decoys: { json: true }, containment: { action: 'block' }, sinks: [], logger: quiet });
+    const mw = lurensic({ secret: SECRET, mode, decoys: { json: true }, containment: { action: 'block' }, sinks: [], logger: quiet });
     const server = await listen(buildApp(mw));
     try {
-      const field = mw.kagami.manifest().decoys.json_field;
+      const field = mw.lurensic.manifest().decoys.json_field;
       await fetchRaw(server.base, `/api/me?${field}=admin`);
       const res = await fetchRaw(server.base, '/');
       assert.equal(res.status, expected, mode);
     } finally {
       await server.close();
-      await mw.kagami.close();
+      await mw.lurensic.close();
     }
   }
 });
@@ -323,40 +323,40 @@ test('clientAddress lets the core resolve the client address and ignores forged 
     [{ cloudflare: true }, { 'cf-connecting-ip': '8.8.8.8', 'x-forwarded-for': '8.8.4.4' }, '127.0.0.1'],
   ];
   for (const [clientAddress, headers, expected] of cases) {
-    const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, clientAddress, sinks: [], logger: quiet });
+    const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, clientAddress, sinks: [], logger: quiet });
     const server = await listen(buildApp(mw));
     try {
-      const field = mw.kagami.manifest().decoys.json_field;
+      const field = mw.lurensic.manifest().decoys.json_field;
       await fetchRaw(server.base, `/api/me?${field}=admin`, { headers });
-      assert.deepEqual(mw.kagami.contained().map((m) => m.target), [expected], JSON.stringify(clientAddress));
+      assert.deepEqual(mw.lurensic.contained().map((m) => m.target), [expected], JSON.stringify(clientAddress));
     } finally {
       await server.close();
-      await mw.kagami.close();
+      await mw.lurensic.close();
     }
   }
 });
 
-test('on Render, Kagami uses the Render setting by itself, and KAGAMI_PROXY names a preset', async () => {
+test('on Render, Lurensic uses the Render setting by itself, and LURENSIC_PROXY names a preset', async () => {
   // Headers as recorded on a live Render service. Render's edge is Cloudflare
   // and its proxy reaches the app over loopback.
   const headers = { 'x-forwarded-for': '198.51.100.23, 162.159.114.84, 10.24.84.0', 'cf-connecting-ip': '198.51.100.23' };
   const cases = [
     [{ env: { RENDER: 'true' } }, '198.51.100.23'],
-    [{ env: { KAGAMI_PROXY: 'render' } }, '198.51.100.23'],
+    [{ env: { LURENSIC_PROXY: 'render' } }, '198.51.100.23'],
     [{ env: {}, clientAddress: 'render' }, '198.51.100.23'],
-    [{ env: { RENDER: 'true', KAGAMI_PROXY: 'none' } }, '127.0.0.1'],
+    [{ env: { RENDER: 'true', LURENSIC_PROXY: 'none' } }, '127.0.0.1'],
     [{ env: {} }, '127.0.0.1'],
   ];
   for (const [options, expected] of cases) {
-    const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet, ...options });
+    const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet, ...options });
     const server = await listen(buildApp(mw));
     try {
-      const field = mw.kagami.manifest().decoys.json_field;
+      const field = mw.lurensic.manifest().decoys.json_field;
       await fetchRaw(server.base, `/api/me?${field}=admin`, { headers });
-      assert.deepEqual(mw.kagami.contained().map((m) => m.target), [expected], JSON.stringify(options));
+      assert.deepEqual(mw.lurensic.contained().map((m) => m.target), [expected], JSON.stringify(options));
     } finally {
       await server.close();
-      await mw.kagami.close();
+      await mw.lurensic.close();
     }
   }
 });
@@ -378,14 +378,14 @@ test('with a store, a machine contained by one instance is blocked by another', 
     app.get('/api/products', (_req, res) => res.json({ products: [] }));
     return listen(app);
   };
-  const firstMw = kagami(opts);
+  const firstMw = lurensic(opts);
   const first = await start(firstMw);
-  const second = await start(kagami(opts));
+  const second = await start(lurensic(opts));
   const as = (ip) => ({ headers: { 'x-forwarded-for': ip } });
   try {
-    const field = firstMw.kagami.manifest().decoys.json_field;
+    const field = firstMw.lurensic.manifest().decoys.json_field;
     await fetchRaw(first.base, `/api/products?${field}=admin`, as('203.0.113.60'));
-    await firstMw.kagami.flush();
+    await firstMw.lurensic.flush();
     assert.equal(map.size, 1);
     assert.equal((await fetchRaw(second.base, '/', as('203.0.113.60'))).status, 403);
     assert.equal((await fetchRaw(second.base, '/', as('198.51.100.60'))).status, 200);
@@ -406,7 +406,7 @@ test('onDetect receives each detection with the subject, next to the other sinks
     if (id) req.user = { id };
     next();
   });
-  const mw = kagami({
+  const mw = lurensic({
     secret: SECRET,
     mode: 'protect',
     sinks: [sink],
@@ -423,7 +423,7 @@ test('onDetect receives each detection with the subject, next to the other sinks
     assert.equal((await fetchRaw(srv.base, '/')).status, 200);
     await fetchRaw(srv.base, '/.env', { headers: { 'x-account': 'acct_9', 'user-agent': 'python-requests/2.32' } });
     await fetchRaw(srv.base, '/.git/config');
-    await mw.kagami.flush();
+    await mw.lurensic.flush();
   } finally {
     await srv.close();
   }
@@ -439,7 +439,7 @@ test('onDetect receives each detection with the subject, next to the other sinks
 
 test('a failing onDetect or subject function never affects requests', async () => {
   const warnings = [];
-  const mw = kagami({
+  const mw = lurensic({
     secret: SECRET,
     mode: 'protect',
     sinks: [],
@@ -456,10 +456,10 @@ test('a failing onDetect or subject function never affects requests', async () =
     assert.equal((await fetchRaw(srv.base, '/')).status, 200);
     const bait = await fetchRaw(srv.base, '/.env', { headers: { 'user-agent': 'python-requests/2.32' } });
     assert.equal(bait.status, 200);
-    await mw.kagami.flush();
+    await mw.lurensic.flush();
   } finally {
     await srv.close();
   }
-  assert.ok(mw.kagami.stats().sinkErrors >= 1);
+  assert.ok(mw.lurensic.stats().sinkErrors >= 1);
   assert.ok(warnings.some((m) => m.includes('onDetect')));
 });

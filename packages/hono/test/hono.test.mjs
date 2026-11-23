@@ -1,9 +1,9 @@
-// Kagami for Hono. The app is called through Hono's own app.request(), and the
+// Lurensic for Hono. The app is called through Hono's own app.request(), and the
 // third argument stands in for what the runtime passes as c.env.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Hono } from 'hono';
-import { kagami, memorySink } from '../dist/index.js';
+import { lurensic, memorySink } from '../dist/index.js';
 
 const SECRET = 'hono-adapter-secret-0123456789abcdef-012345';
 const quiet = { warn() {} };
@@ -29,9 +29,9 @@ function buildApp(mw, hits = {}) {
     const body = await c.req.text();
     return c.json({ ok: true, echo: body.length }, body.includes('password=correct-horse') ? 200 : 401);
   });
-  app.get('/orders', (c) => c.json({ orders: [c.get('kagami')?.seal(1043) ?? '1043'] }));
+  app.get('/orders', (c) => c.json({ orders: [c.get('lurensic')?.seal(1043) ?? '1043'] }));
   app.get('/orders/:id', (c) => {
-    const k = c.get('kagami');
+    const k = c.get('lurensic');
     const id = k ? k.verify(c.req.param('id'), 'order_id') : c.req.param('id');
     return id === null ? c.json({ error: 'not found' }, 404) : c.json({ id });
   });
@@ -46,7 +46,7 @@ async function call(app, path, init = {}, ip = '198.51.100.10') {
   return { status: res.status, headers: Object.fromEntries(res.headers), body: await res.text() };
 }
 
-test('in observe mode every response is identical to the app without Kagami', async () => {
+test('in observe mode every response is identical to the app without Lurensic', async () => {
   const mem = memorySink();
   const attacks = [
     ['/', {}],
@@ -56,16 +56,16 @@ test('in observe mode every response is identical to the app without Kagami', as
     ['/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"user":"admin","password":{"$ne":null}}' }],
   ];
   const plain = buildApp();
-  const mw = kagami({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'observe', sinks: [mem], logger: quiet });
   const guarded = buildApp(mw);
   for (const [path, init] of attacks) assert.deepEqual(await call(guarded, path, init), await call(plain, path, init), path);
-  await mw.kagami.flush();
+  await mw.lurensic.flush();
   const rules = new Set(mem.events.map((e) => e.rule));
   for (const r of ['payload.sqli', 'client.scanner', 'bait.path', 'payload.nosqli']) assert.ok(rules.has(r), `${r} missing, saw ${[...rules]}`);
 });
 
 test('protect mode serves bait and decorates responses without breaking their headers', async () => {
-  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, sinks: [], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, sinks: [], logger: quiet });
   const app = buildApp(mw);
   assert.match((await call(app, '/.env')).body, /^NODE_ENV=production$/m);
   const home = await call(app, '/');
@@ -73,25 +73,25 @@ test('protect mode serves bait and decorates responses without breaking their he
   assert.equal(home.headers['x-inner'], 'kept', 'headers from other middleware survive decoration');
   assert.notEqual(home.headers['content-length'], String(Buffer.byteLength(HTML)), 'the original Content-Length is not carried over');
   const me = await call(app, '/api/me');
-  assert.ok(mw.kagami.manifest().decoys.json_field in JSON.parse(me.body));
+  assert.ok(mw.lurensic.manifest().decoys.json_field in JSON.parse(me.body));
   assert.equal(me.headers['x-inner'], 'kept');
   assert.equal((await call(app, '/search?q=boots')).body, '<p>Results for boots</p>');
 });
 
-test('c.get("kagami") seals and verifies values', async () => {
+test('c.get("lurensic") seals and verifies values', async () => {
   const mem = memorySink();
-  const mw = kagami({ secret: SECRET, sinks: [mem], logger: quiet });
+  const mw = lurensic({ secret: SECRET, sinks: [mem], logger: quiet });
   const app = buildApp(mw);
   const { orders } = JSON.parse((await call(app, '/orders')).body);
   assert.notEqual(orders[0], '1043', 'the ID is sealed');
   assert.deepEqual(JSON.parse((await call(app, `/orders/${encodeURIComponent(orders[0])}`)).body), { id: '1043' });
   assert.equal((await call(app, `/orders/${encodeURIComponent(orders[0].replace('1043', '1044'))}`)).status, 404);
-  await mw.kagami.flush();
+  await mw.lurensic.flush();
   assert.ok(mem.events.some((e) => e.rule === 'tamper.sealed_value'));
 });
 
-test('the app can still read a request body that Kagami inspected', async () => {
-  const app = buildApp(kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet }));
+test('the app can still read a request body that Lurensic inspected', async () => {
+  const app = buildApp(lurensic({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet }));
   const body = 'user=admin&password=correct-horse';
   const res = await call(app, '/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
   assert.equal(res.status, 200);
@@ -100,11 +100,11 @@ test('the app can still read a request body that Kagami inspected', async () => 
 
 test('a contained machine never reaches the routes', async () => {
   const hits = {};
-  const mw = kagami({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', decoys: { json: true }, containment: true, sinks: [], logger: quiet });
   const app = buildApp(mw, hits);
   const home = await call(app, '/', {}, '198.51.100.40');
   await call(app, '/nothing-here', {}, '198.51.100.40');
-  const field = mw.kagami.manifest().decoys.json_field;
+  const field = mw.lurensic.manifest().decoys.json_field;
   assert.equal((await call(app, `/api/products?${field}=admin`, {}, '203.0.113.77')).status, 404);
   const before = { ...hits };
   const strip = (s) => s.replace(/<!--[\s\S]*?-->\n?/g, '');
@@ -114,14 +114,14 @@ test('a contained machine never reaches the routes', async () => {
   assert.deepEqual(hits, before, 'no route ran for the contained machine');
   await call(app, '/', {}, '198.51.100.40');
   assert.equal(hits.home, before.home + 1, 'other visitors are unaffected');
-  await mw.kagami.close();
+  await mw.lurensic.close();
 });
 
 test('on Workers, settings come from the bindings and background work goes to waitUntil', async () => {
   let waited = 0;
-  const mw = kagami({ sinks: [], logger: quiet });
+  const mw = lurensic({ sinks: [], logger: quiet });
   const app = buildApp(mw);
-  const bindings = { KAGAMI_SECRET: SECRET, KAGAMI_MODE: 'protect' };
+  const bindings = { LURENSIC_SECRET: SECRET, LURENSIC_MODE: 'protect' };
   const executionCtx = { waitUntil: (p) => (waited++, p), passThroughOnException() {} };
   // On Workers, Cloudflare sets CF-Connecting-IP and the request carries `cf`.
   const req = new Request('http://localhost/.env', { headers: { 'cf-connecting-ip': '198.51.100.12' } });
@@ -142,10 +142,10 @@ const RENDER_CASES = [
 
 async function addressSeen(options, xff, cf) {
   const mem = memorySink();
-  const mw = kagami({ secret: SECRET, mode: 'protect', sinks: [mem], logger: quiet, ...options });
+  const mw = lurensic({ secret: SECRET, mode: 'protect', sinks: [mem], logger: quiet, ...options });
   const app = buildApp(mw);
   await app.request('/.env', { headers: { 'x-forwarded-for': xff, 'cf-connecting-ip': cf } }, { incoming: { socket: { remoteAddress: '::1' } } });
-  await mw.kagami.flush();
+  await mw.lurensic.flush();
   return [...new Set(mem.events.filter((e) => e.kind !== 'system').map((e) => e.source?.ip))];
 }
 
@@ -153,7 +153,7 @@ test('on Render behind Cloudflare the visitor address is the one Cloudflare saw,
   const setups = {
     'written out': { clientAddress: { cloudflare: true, trustedProxies: ['::1', '127.0.0.1', '10.0.0.0/8'] }, env: {} },
     'the render preset': { clientAddress: 'render', env: {} },
-    'KAGAMI_PROXY=render': { env: { KAGAMI_PROXY: 'render' } },
+    'LURENSIC_PROXY=render': { env: { LURENSIC_PROXY: 'render' } },
     'RENDER=true, set by Render itself': { env: { RENDER: 'true' } },
   };
   for (const [setup, options] of Object.entries(setups)) {
@@ -163,12 +163,12 @@ test('on Render behind Cloudflare the visitor address is the one Cloudflare saw,
   }
 });
 
-test('KAGAMI_PROXY=none turns off the automatic Render setting, and an unknown preset trusts no headers', async () => {
+test('LURENSIC_PROXY=none turns off the automatic Render setting, and an unknown preset trusts no headers', async () => {
   const [, xff, cf] = RENDER_CASES[0];
-  assert.deepEqual(await addressSeen({ env: { RENDER: 'true', KAGAMI_PROXY: 'none' } }, xff, cf), ['::1']);
+  assert.deepEqual(await addressSeen({ env: { RENDER: 'true', LURENSIC_PROXY: 'none' } }, xff, cf), ['::1']);
   assert.deepEqual(await addressSeen({ env: {} }, xff, cf), ['::1'], 'nothing is trusted by default');
   const warnings = [];
-  const mw = kagami({ secret: SECRET, clientAddress: 'rendr', sinks: [], logger: { warn: (m) => warnings.push(m) } });
+  const mw = lurensic({ secret: SECRET, clientAddress: 'rendr', sinks: [], logger: { warn: (m) => warnings.push(m) } });
   await buildApp(mw).request('/', {}, { incoming: { socket: { remoteAddress: '::1' } } });
   assert.ok(warnings.some((m) => m.includes('"rendr" is not a client address preset')), warnings.join('\n'));
 });

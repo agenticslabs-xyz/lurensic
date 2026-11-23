@@ -1,20 +1,20 @@
 /**
- * Kagami for Express.
+ * Lurensic for Express.
  *
  *   app.use(express.json());
  *   app.use(express.urlencoded({ extended: false }));
- *   app.use(kagami());          // reads KAGAMI_SECRET, starts in observe mode
+ *   app.use(lurensic());          // reads LURENSIC_SECRET, starts in observe mode
  *
  * Mount it after the body parsers, so bodies are inspected, and before your
- * routes. Every code path fails open. If anything inside Kagami goes wrong,
+ * routes. Every code path fails open. If anything inside Lurensic goes wrong,
  * the request continues to your app untouched.
  */
 import type { ErrorRequestHandler, Request, RequestHandler, Response } from 'express';
-import { Kagami, subjectOf, type HttpRequest, type KagamiOptions, type Verdict } from '@agenticslabs/kagami';
+import { Lurensic, subjectOf, type HttpRequest, type LurensicOptions, type Verdict } from '@agenticslabs/lurensic';
 
-export * from '@agenticslabs/kagami';
+export * from '@agenticslabs/lurensic';
 
-export interface KagamiRequestContext {
+export interface LurensicRequestContext {
   /** Opaque session id (keyed hash of IP and user agent). */
   readonly session: string;
   /** Keyed hash of the client address. All sessions from one machine share it. */
@@ -23,13 +23,13 @@ export interface KagamiRequestContext {
   readonly score: number;
   /** Every rule this request matched, including repeats that produce no new event. */
   readonly rules: readonly string[];
-  /** The client's machine is contained. In protect mode Kagami answered and the app never sees the request. */
+  /** The client's machine is contained. In protect mode Lurensic answered and the app never sees the request. */
   readonly contained: boolean;
   /** Seal a value you hand to the client (ID, price, role). */
   seal(value: string | number): string;
   /**
    * Unseal a value the client sent back. Returns `null` if it was tampered
-   * with; Kagami records the tampering and flags the session.
+   * with; Lurensic records the tampering and flags the session.
    */
   verify(sealed: string, name?: string): string | null;
 }
@@ -38,17 +38,17 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      kagami?: KagamiRequestContext;
+      lurensic?: LurensicRequestContext;
     }
   }
 }
 
-export interface KagamiExpressOptions extends KagamiOptions {
+export interface LurensicExpressOptions extends LurensicOptions {
   /** Reuse an existing engine instead of creating one. */
-  instance?: Kagami;
+  instance?: Lurensic;
   /**
    * How to find the real client IP yourself. Prefer `clientAddress`, which
-   * lets Kagami do it safely and the same way in every language. Without
+   * lets Lurensic do it safely and the same way in every language. Without
    * either, Express's `req.ip` is used (configure `app.set('trust proxy', ...)`).
    * Getting this right matters because sessions and containment are keyed on it.
    */
@@ -56,7 +56,7 @@ export interface KagamiExpressOptions extends KagamiOptions {
   /**
    * Return your app's id for whoever sent the request, such as `req.user?.id`,
    * so each event says whom to act on. Never return a cookie, token or session
-   * secret, because events are logged. Mount Kagami after your auth
+   * secret, because events are logged. Mount Lurensic after your auth
    * middleware for `req.user` to be set when the request is inspected. The
    * function runs again when the response finishes, so events raised then
    * also see ids your routes set. Return undefined for anonymous visitors.
@@ -117,14 +117,14 @@ interface Captured {
 
 const MAX_CAPTURE = 64 * 1024;
 
-function wrapSend(res: Response, k: Kagami, verdict: Verdict, path: string, captured: Captured): void {
+function wrapSend(res: Response, k: Lurensic, verdict: Verdict, path: string, captured: Captured): void {
   const original = res.send;
   res.send = function patchedSend(this: Response, body?: unknown) {
     let out = body;
     try {
       if (typeof body === 'string') {
         // Keep the app's original body for the shadow (`capture`) and for
-        // learning the app's 401 format. Kagami's own bait is never stored.
+        // learning the app's 401 format. Lurensic's own bait is never stored.
         const wanted = verdict.capture || (this.statusCode === 401 && k.wants401Body);
         if (wanted && body.length <= MAX_CAPTURE) captured.body = body;
       }
@@ -153,7 +153,7 @@ function responseHeaders(res: Response): Array<[string, string]> {
   return out;
 }
 
-export type KagamiMiddleware = [RequestHandler, ErrorRequestHandler] & { kagami: Kagami };
+export type LurensicMiddleware = [RequestHandler, ErrorRequestHandler] & { lurensic: Lurensic };
 
 /** Body parser failures carry a `type` such as `entity.parse.failed` or `charset.unsupported`. */
 function bodyError(err: unknown): { type: string; body: string } | null {
@@ -170,16 +170,16 @@ function bodyError(err: unknown): { type: string; body: string } | null {
  * parser rejected before the middleware ran, so malformed bodies are still
  * inspected. Attackers send them on purpose.
  */
-export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
-  const k = options.instance ?? new Kagami(options);
-  // With `clientAddress`, `KAGAMI_PROXY` or the automatic Render setting,
+export function lurensic(options: LurensicExpressOptions = {}): LurensicMiddleware {
+  const k = options.instance ?? new Lurensic(options);
+  // With `clientAddress`, `LURENSIC_PROXY` or the automatic Render setting,
   // the core resolves the client address from the raw peer and the headers.
   // A custom `clientIp` function takes precedence.
   const resolveInCore = !options.clientIp && k.resolvesClientAddress;
 
-  /** Attach the verdict to the request and apply its action. Returns true if Kagami answered. */
+  /** Attach the verdict to the request and apply its action. Returns true if Lurensic answered. */
   const apply = (req: Request, res: Response, info: HttpRequest, verdict: Verdict, decorate: boolean): boolean => {
-    req.kagami = {
+    req.lurensic = {
       session: verdict.session,
       source: verdict.source,
       state: verdict.state,
@@ -255,7 +255,7 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
 
   const errors: ErrorRequestHandler = (err, req, res, next) => {
     const parsed = bodyError(err);
-    if (req.kagami || !parsed || res.headersSent) {
+    if (req.lurensic || !parsed || res.headersSent) {
       next(err);
       return;
     }
@@ -280,7 +280,7 @@ export function kagami(options: KagamiExpressOptions = {}): KagamiMiddleware {
     else proceed();
   };
 
-  return Object.assign([middleware, errors] as [RequestHandler, ErrorRequestHandler], { kagami: k });
+  return Object.assign([middleware, errors] as [RequestHandler, ErrorRequestHandler], { lurensic: k });
 }
 
-export default kagami;
+export default lurensic;

@@ -1,6 +1,6 @@
 # Getting started
 
-This guide adds Kagami to an Express app in four steps. Each step is safe to deploy on its own, and each one ends
+This guide adds Lurensic to an Express app in four steps. Each step is safe to deploy on its own, and each one ends
 with a check. The same four steps apply to Hono, Cloudflare Workers, Bun and Deno. Only the install and the one line
 differ, as shown in [Choose your setup](choose-your-setup.md).
 
@@ -14,13 +14,13 @@ flowchart LR
 ## 1. Install and set the secret
 
 ```bash
-npm install @agenticslabs/kagami-express
-npx @agenticslabs/kagami secret
+npm install @agenticslabs/lurensic-express
+npx @agenticslabs/lurensic secret
 ```
 
-The second command prints a random value. Set it as the environment variable `KAGAMI_SECRET` wherever the app runs,
+The second command prints a random value. Set it as the environment variable `LURENSIC_SECRET` wherever the app runs,
 the same way you set other secrets such as a database password. Keep it out of source control. It is the only
-credential Kagami needs. It is not an account or an API key, and nothing is sent anywhere.
+credential Lurensic needs. It is not an account or an API key, and nothing is sent anywhere.
 
 Every decoy name, honeytoken and seal is derived from this secret. Changing it changes all of them, and honeytokens
 handed out under the old secret stop working as tripwires.
@@ -29,24 +29,24 @@ handed out under the old secret stop working as tripwires.
 
 ```js
 import express from 'express';
-import { kagami } from '@agenticslabs/kagami-express';
+import { lurensic } from '@agenticslabs/lurensic-express';
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use(kagami());          // after the body parsers, before your routes and static files
+app.use(lurensic());          // after the body parsers, before your routes and static files
 
 app.get('/', (req, res) => res.send('...'));
 ```
 
-**Order matters.** Kagami must come after the body parsers, so it can read request bodies, and before your routes and
-static file middleware, so it sees every request first. `kagami()` returns the middleware and an error handler as a
+**Order matters.** Lurensic must come after the body parsers, so it can read request bodies, and before your routes and
+static file middleware, so it sees every request first. `lurensic()` returns the middleware and an error handler as a
 pair, so requests that a body parser rejects are inspected too.
 
-In observe mode Kagami never changes a response. It writes events as JSON lines to stdout. Run the doctor.
+In observe mode Lurensic never changes a response. It writes events as JSON lines to stdout. Run the doctor.
 
 ```bash
-npx @agenticslabs/kagami doctor --url http://localhost:3000
+npx @agenticslabs/lurensic doctor --url http://localhost:3000
 ```
 
 Then try an attack against your own app and watch an event appear.
@@ -58,12 +58,12 @@ curl "http://localhost:3000/search?q=%27%20OR%201%3D1--"
 ### Act on detections
 
 Pass `onDetect` to run your own code for each detection, and `subject` so each event names the account
-that sent the request. Never return a cookie, token or session secret, because the value is written to the logs. Mount Kagami after your auth middleware if `subject` reads `req.user`.
+that sent the request. Never return a cookie, token or session secret, because the value is written to the logs. Mount Lurensic after your auth middleware if `subject` reads `req.user`.
 
 ```js
-import { kagami, safeToActOnSubject } from '@agenticslabs/kagami-express';
+import { lurensic, safeToActOnSubject } from '@agenticslabs/lurensic-express';
 
-app.use(kagami({
+app.use(lurensic({
   subject: (req) => req.user?.id,
   onDetect: async (event) => {
     if (event.severity === 'critical' && safeToActOnSubject(event)) await accounts.lock(event.subject);
@@ -84,20 +84,20 @@ listed in `untrusted`, including `evidence` and `subject`, comes from the attack
 To keep events in a file or send them on as well, add sinks. `onDetect` keeps working next to them.
 
 ```js
-import { consoleSink, fileSink, kagami, slackSink, webhookSink } from '@agenticslabs/kagami-express';
+import { consoleSink, fileSink, lurensic, slackSink, webhookSink } from '@agenticslabs/lurensic-express';
 
-app.use(kagami({
+app.use(lurensic({
   sinks: [
     consoleSink(),
-    fileSink({ path: '/var/log/myapp/kagami-events.jsonl' }),
-    webhookSink({ url: 'https://siem.example.com/hook', secret: process.env.KAGAMI_WEBHOOK_SECRET }),
+    fileSink({ path: '/var/log/myapp/lurensic-events.jsonl' }),
+    webhookSink({ url: 'https://siem.example.com/hook', secret: process.env.LURENSIC_WEBHOOK_SECRET }),
     slackSink({ webhookUrl: process.env.SLACK_WEBHOOK, minSeverity: 'high' }),
   ],
 }));
 ```
 
 **If your app runs behind a proxy, a load balancer or a CDN**, read [Behind a proxy or CDN](behind-a-proxy.md) now.
-Kagami keys everything on the client address, so it has to be right before you go further.
+Lurensic keys everything on the client address, so it has to be right before you go further.
 
 ## 3. Protect
 
@@ -105,7 +105,7 @@ Protect mode turns on deception. Attackers get fake files, a decoy API and plant
 see any of it.
 
 ```js
-app.use(kagami({
+app.use(lurensic({
   mode: 'protect',
   decoys: {
     json: true,           // a decoy field in JSON object responses
@@ -118,7 +118,7 @@ app.use(kagami({
 Add `spec: true` to the decoys to serve a decoy API description, which agents read first and which lists only decoy
 routes. Leave it off if your app publishes its own OpenAPI or Swagger description, or list that path in
 `reservedPaths`. The doctor checks this for you. All three optional decoys can also be turned on without code, with
-`KAGAMI_DECOYS=json,forms,spec`.
+`LURENSIC_DECOYS=json,forms,spec`.
 
 `decoys.json` and `decoys.forms` are off by default because they add one field to your responses and your forms.
 Leave them off if a client validates responses strictly, or if a form handler rejects unknown fields. They are the
@@ -128,26 +128,26 @@ Seal the IDs you hand to clients. A changed or forged ID is then caught.
 
 ```js
 app.get('/api/orders', (req, res) =>
-  res.json(orders.map((o) => ({ ...o, id: req.kagami.seal(o.id) }))));
+  res.json(orders.map((o) => ({ ...o, id: req.lurensic.seal(o.id) }))));
 
 app.get('/api/orders/:id', (req, res) => {
-  const id = req.kagami.verify(req.params.id, 'order_id');   // null means forged, and it is already reported
+  const id = req.lurensic.verify(req.params.id, 'order_id');   // null means forged, and it is already reported
   if (id === null) return res.status(404).end();
   // ...
 });
 ```
 
-Run the doctor again. It should now report that Kagami answered a probe for `/.env` in protect mode.
+Run the doctor again. It should now report that Lurensic answered a probe for `/.env` in protect mode.
 
-## 4. Optional. Let Kagami contain attackers itself
+## 4. Optional. Let Lurensic contain attackers itself
 
-Most apps act on detections in `onDetect`. If you would rather Kagami acted on its own, containment cuts a machine
+Most apps act on detections in `onDetect`. If you would rather Lurensic acted on its own, containment cuts a machine
 off from your app the moment it touches a tripwire. It is off by default.
 
 ```js
-import { blocklistFile, kagami } from '@agenticslabs/kagami-express';
+import { blocklistFile, lurensic } from '@agenticslabs/lurensic-express';
 
-app.use(kagami({
+app.use(lurensic({
   mode: 'protect',
   decoys: { json: true, forms: true },
   containment: {
@@ -159,14 +159,14 @@ app.use(kagami({
 }));
 ```
 
-Try it in observe mode first. With `mode: 'observe'` and `containment: true`, Kagami only reports
+Try it in observe mode first. With `mode: 'observe'` and `containment: true`, Lurensic only reports
 `containment.started` events, so you can see who would have been contained.
 
 The blocklist file is optional. It is for a firewall or a WAF that reads a list, such as nginx. For a CDN such as
 Cloudflare or a cloud WAF, see [Blocking at your firewall or CDN](firewall.md).
 
-Containment can also be switched on without code changes, with `KAGAMI_MODE=protect` and `KAGAMI_CONTAINMENT=on`.
+Containment can also be switched on without code changes, with `LURENSIC_MODE=protect` and `LURENSIC_CONTAINMENT=on`.
 
 ## Switching off
 
-Set `KAGAMI_DISABLED=1` and restart. Kagami then lets every request through untouched.
+Set `LURENSIC_DISABLED=1` and restart. Lurensic then lets every request through untouched.

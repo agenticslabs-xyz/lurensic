@@ -1,7 +1,7 @@
 //! Client address handling for sources, allowlists and containment targets.
 //!
 //! IPv6 clients usually control a whole /64, so an attacker can change its
-//! address on every request without leaving its network. Kagami therefore
+//! address on every request without leaving its network. Lurensic therefore
 //! treats an IPv6 /64 as one machine. IPv4-mapped IPv6 addresses
 //! (`::ffff:203.0.113.9`, which Node reports for IPv4 clients on dual-stack
 //! sockets) are treated as the IPv4 address they carry.

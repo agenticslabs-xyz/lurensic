@@ -9,10 +9,10 @@
 // of them appear, so private names never reach the public repository.
 //
 // An optional harness.json in the round folder adds the attacker's side of
-// the round, which Kagami cannot see. All fields are optional.
+// the round, which Lurensic cannot see. All fields are optional.
 //   {
 //     "harness": "ARTEX",
-//     "findings": { "decoy": 0, "real": 1, "kagami_artefact": 0 },
+//     "findings": { "decoy": 0, "real": 1, "lurensic_artefact": 0 },
 //     "llm_calls": 205, "input_tokens": 5881433, "output_tokens": 240257,
 //     "notes": "Free text about how the attacker treated the decoys."
 //   }
@@ -21,7 +21,7 @@ import { gzipSync } from 'node:zlib';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { Kagami, verifyChain } from '../packages/node/dist/index.js';
+import { Lurensic, verifyChain } from '../packages/node/dist/index.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { values, positionals } = parseArgs({
@@ -39,7 +39,9 @@ const readLines = (file) =>
   existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() !== '') : [];
 
 const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
-const eventLines = readLines(join(runDir, 'kagami-events.jsonl'));
+// Rounds recorded before the project was renamed keep their original log file name.
+const EVENTS_FILE = ['lurensic-events.jsonl', 'kagami-events.jsonl'].find((f) => existsSync(join(runDir, f))) ?? 'lurensic-events.jsonl';
+const eventLines = readLines(join(runDir, EVENTS_FILE));
 const events = eventLines.map((l) => JSON.parse(l));
 // The warm-up visitor's requests are the operator's own and are left out.
 const isWarmup = (a) => (a.header_order ?? []).some((h) => String(h).toLowerCase() === 'x-bench-warmup');
@@ -86,11 +88,11 @@ const session = (id) => {
   return sessions.get(id);
 };
 for (const a of access) {
-  // Health checks are the operator's own and are skipped by Kagami.
-  if (!a.kagami?.session || a.path === '/healthz') continue;
-  const s = session(a.kagami.session);
+  // Health checks are the operator's own and are skipped by Lurensic.
+  if (!a.lurensic?.session || a.path === '/healthz') continue;
+  const s = session(a.lurensic.session);
   s.requests.push(a);
-  s.source ||= a.kagami.source ?? '';
+  s.source ||= a.lurensic.source ?? '';
 }
 for (const e of events) {
   if (!e.session?.id) continue;
@@ -101,7 +103,7 @@ for (const e of events) {
 
 // Access records are written when a response finishes. Subtracting the
 // recorded duration gives the moment the request arrived, which is when
-// Kagami stamps its events.
+// Lurensic stamps its events.
 const arrived = (a) => ms(a.ts) - (a.ms ?? 0);
 
 function note(e) {
@@ -183,14 +185,14 @@ const decoyHits = access.filter((a) => events.some((e) => e.rule === 'decoy.rout
 
 // ---------- deception engagement ----------
 //
-// Which requests went to Kagami's decoys, and how much of the attacker's
+// Which requests went to Lurensic's decoys, and how much of the attacker's
 // time they took. Decoy names are derived from the round's secret, so they
-// are recomputed here from .kagami-secret, which never leaves the round folder.
+// are recomputed here from .lurensic-secret, which never leaves the round folder.
 
 async function loadDecoys() {
-  const file = join(runDir, '.kagami-secret');
+  const file = join(runDir, '.lurensic-secret');
   if (!existsSync(file)) return null;
-  const k = new Kagami({ secret: readFileSync(file, 'utf8').trim(), mode: 'observe', sinks: [], logger: { warn() {} } });
+  const k = new Lurensic({ secret: readFileSync(file, 'utf8').trim(), mode: 'observe', sinks: [], logger: { warn() {} } });
   const decoys = k.manifest()?.decoys ?? null;
   await k.close();
   return decoys;
@@ -221,7 +223,7 @@ const queryNames = (q) =>
 
 function decoyKind(a) {
   const p = normPath(a.path);
-  const rules = a.kagami?.rules;
+  const rules = a.lurensic?.rules;
   if (rules?.includes('honeytoken.used')) return 'honeytoken';
   if (rules?.includes('tamper.decoy_secret')) return 'forged_session';
   if (rules?.includes('decoy.route') || decoys?.routes?.includes(p)) return 'decoy_route';
@@ -245,7 +247,7 @@ const GAP_CAP_MS = 60_000;
 const lastBySource = new Map();
 const engagement = { requests: 0, time_ms: 0, first_ms: null, last_ms: null, by_kind: {} };
 for (const a of [...access].sort((x, y) => arrived(x) - arrived(y))) {
-  const src = a.kagami?.source ?? a.ip;
+  const src = a.lurensic?.source ?? a.ip;
   const t = arrived(a);
   const prev = lastBySource.get(src);
   lastBySource.set(src, t);
@@ -283,19 +285,19 @@ const touchpoints = TOUCHPOINTS.map(([rule, label]) => {
 // question that matters, whether the attacker reached real bugs.
 
 const containmentEvents = events.filter((e) => e.rule === 'containment.started');
-const containedRequests = access.filter((a) => a.kagami?.contained).length;
+const containedRequests = access.filter((a) => a.lurensic?.contained).length;
 const firstContained = new Map();
 for (const e of containmentEvents) {
   const src = e.evidence?.contained_source;
   if (src && !firstContained.has(src)) firstContained.set(src, ms(e.ts));
 }
 // Requests from a machine that reached the app after it was contained.
-// The demo shop's health check is in Kagami's ignorePaths, which match by
+// The demo shop's health check is in Lurensic's ignorePaths, which match by
 // prefix, so it and everything under it is never contained by design.
 const healthCheck = (a) => normPath(a.path) === '/healthz' || normPath(a.path).startsWith('/healthz/');
 const leaked = access.filter((a) => {
-  const t = firstContained.get(a.kagami?.source);
-  return t !== undefined && arrived(a) > t + 1 && !a.kagami?.contained && a.kagami?.session && !healthCheck(a);
+  const t = firstContained.get(a.lurensic?.source);
+  return t !== undefined && arrived(a) > t + 1 && !a.lurensic?.contained && a.lurensic?.session && !healthCheck(a);
 }).length;
 const containment = {
   setting: run.containment ?? (containmentEvents.length ? 'on' : 'off'),
@@ -335,14 +337,14 @@ const harness = existsSync(harnessFile) ? JSON.parse(readFileSync(harnessFile, '
 let attacker = null;
 if (harness) {
   const f = harness.findings ?? {};
-  const [decoy, real, artefact] = [f.decoy ?? 0, f.real ?? 0, f.kagami_artefact ?? 0];
+  const [decoy, real, artefact] = [f.decoy ?? 0, f.real ?? 0, f.lurensic_artefact ?? 0];
   const total = decoy + real + artefact;
   attacker = {
     harness: harness.harness ?? null,
     findings_total: total,
     findings_decoy: decoy,
     findings_real: real,
-    findings_kagami_artefact: artefact,
+    findings_lurensic_artefact: artefact,
     deception_yield: total ? decoy / total : null,
     llm_calls: harness.llm_calls ?? null,
     input_tokens: harness.input_tokens ?? null,
@@ -355,7 +357,7 @@ if (harness) {
 
 const summary = {
   label: run.label,
-  kagami_version: run.kagami_version,
+  lurensic_version: run.lurensic_version,
   mode: run.mode,
   started_at: run.started_at,
   duration_ms: finish - start,
@@ -389,7 +391,7 @@ const md = [];
 const label = run.label ?? basename(runDir);
 md.push(`# Benchmark round ${label}`, '');
 md.push(
-  `${run.mode === 'off' ? `Kagami ${run.kagami_version} was switched off for this baseline round.` : `Kagami ${run.kagami_version} ran in ${run.mode} mode${run.containment && run.containment !== 'off' ? ` with ${run.containment} containment` : ''}.`}${run.planted_bugs ? ' The target carried two planted real bugs.' : ''} The service started at ${run.started_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}. The attack began ${duration(start - serviceStart)} later and lasted ${duration(finish - start)}. Times in this report count from the attack's first request.${warmupRequests ? ` An honest visitor made ${warmupRequests} requests before the attack, which are left out.` : ''}`,
+  `${run.mode === 'off' ? `Lurensic ${run.lurensic_version} was switched off for this baseline round.` : `Lurensic ${run.lurensic_version} ran in ${run.mode} mode${run.containment && run.containment !== 'off' ? ` with ${run.containment} containment` : ''}.`}${run.planted_bugs ? ' The target carried two planted real bugs.' : ''} The service started at ${run.started_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}. The attack began ${duration(start - serviceStart)} later and lasted ${duration(finish - start)}. Times in this report count from the attack's first request.${warmupRequests ? ` An honest visitor made ${warmupRequests} requests before the attack, which are left out.` : ''}`,
   chain.ok
     ? `The event log hash chain verifies, covering ${chain.events} events.`
     : `The event log hash chain does not verify. It breaks at line ${chain.line} because of ${chain.reason}.`,
@@ -428,7 +430,7 @@ if (planted) {
 if (response) {
   md.push('## Response through onDetect', '');
   md.push(
-    "The app acted on Kagami's events itself, as a developer would. A tripwire blocked the sender's address for the rest of the round, and locked the account when the event named one and `safeToActOnSubject` allowed it.",
+    "The app acted on Lurensic's events itself, as a developer would. A tripwire blocked the sender's address for the rest of the round, and locked the account when the event named one and `safeToActOnSubject` allowed it.",
     '',
   );
   md.push('| Measure | Value |', '|---|---|');
@@ -445,19 +447,19 @@ if (containment.setting !== 'off' || containmentEvents.length) {
   md.push(`| Setting | ${containment.setting}${containment.enforced ? '' : ' (dry run, nothing enforced)'} |`);
   md.push(`| Machines contained | ${containment.machines} |`);
   md.push(`| First containment | ${containment.first_ms == null ? 'none' : `${duration(containment.first_ms)} into the round`} |`);
-  md.push(`| Requests answered by Kagami instead of the app | ${num(containment.contained_requests)} |`);
+  md.push(`| Requests answered by Lurensic instead of the app | ${num(containment.contained_requests)} |`);
   md.push(`| Requests that reached the app after their machine was contained | ${num(containment.reached_app_after_containment)} |`);
   md.push('');
 }
 
 if (attacker) {
   md.push('## Attacker outcome', '');
-  md.push(`These numbers come from the attacking harness${attacker.harness ? ` (${cell(attacker.harness)})` : ''} and not from Kagami.`, '');
+  md.push(`These numbers come from the attacking harness${attacker.harness ? ` (${cell(attacker.harness)})` : ''} and not from Lurensic.`, '');
   md.push('| Measure | Value |', '|---|---|');
   md.push(`| Findings reported | ${attacker.findings_total} |`);
-  md.push(`| Findings caused by Kagami decoys | ${attacker.findings_decoy} |`);
+  md.push(`| Findings caused by Lurensic decoys | ${attacker.findings_decoy} |`);
   md.push(`| Real findings | ${attacker.findings_real} |`);
-  if (attacker.findings_kagami_artefact) md.push(`| Findings about Kagami itself | ${attacker.findings_kagami_artefact} |`);
+  if (attacker.findings_lurensic_artefact) md.push(`| Findings about Lurensic itself | ${attacker.findings_lurensic_artefact} |`);
   md.push(`| Deception yield (decoy findings out of all findings) | ${attacker.deception_yield == null ? 'n/a' : pct(attacker.deception_yield)} |`);
   md.push(`| LLM calls | ${num(attacker.llm_calls)} |`);
   md.push(`| Input tokens | ${num(attacker.input_tokens)} |`);
@@ -484,8 +486,8 @@ if (decoys) {
   md.push('');
   md.push(
     'Time on a decoy request is the gap since the previous request from the same machine, capped at one minute. ' +
-      (access.some((a) => a.kagami?.rules)
-        ? 'Decoy fields are counted from the rules Kagami matched on each request, so fields sent in a request body are included.'
+      (access.some((a) => a.lurensic?.rules)
+        ? 'Decoy fields are counted from the rules Lurensic matched on each request, so fields sent in a request body are included.'
         : 'This round was recorded before per-request rules were logged. Request bodies are not logged, so decoy fields sent in a body show up only as `decoy.param` events above.'),
     '',
   );
@@ -547,7 +549,7 @@ if (ruleCounts.size) {
 }
 
 md.push('## Files', '');
-md.push('- `kagami-events.jsonl` holds every Kagami event. Verify it with `npx @agenticslabs/kagami verify-log kagami-events.jsonl`.');
+md.push('- `lurensic-events.jsonl` holds every Lurensic event. Verify it with `npx @agenticslabs/lurensic verify-log lurensic-events.jsonl`.');
 md.push('- `access.jsonl` holds every request the demo served, without bodies, cookies or header values other than the user agent.');
 md.push('- `run.json` holds the round settings and timing.');
 if (harness) md.push('- `harness.json` holds the attacking harness results, entered by the person who ran the round.');
@@ -569,7 +571,7 @@ if (values.publish) {
   const words = existsSync(privateFile)
     ? readFileSync(privateFile, 'utf8').split('\n').map((w) => w.trim().toLowerCase()).filter((w) => w && !w.startsWith('#'))
     : [];
-  const files = ['report.md', 'report.json', 'run.json', 'harness.json', 'kagami-events.jsonl', 'access.jsonl'].filter((f) => existsSync(join(runDir, f)));
+  const files = ['report.md', 'report.json', 'run.json', 'harness.json', EVENTS_FILE, 'access.jsonl'].filter((f) => existsSync(join(runDir, f)));
   const leaks = [];
   for (const f of files) {
     const text = readFileSync(join(runDir, f), 'utf8').toLowerCase();

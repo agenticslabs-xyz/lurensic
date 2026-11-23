@@ -1,14 +1,14 @@
-# Kagami
+# Lurensic
 
-> Kagami is an open-source, deception-based defence against AI-driven attacks on web applications. It is an engine
+> Lurensic is an open-source, deception-based defence against AI-driven attacks on web applications. It is an engine
 > inside the app that detects attacks through tripwires only attackers touch (planted credentials, decoy routes,
 > decoy fields, sealed IDs), misleads the attacking agent with decoys, and hands each detection to the developer's
 > code through one callback, `onDetect(event)`. The developer decides the response. The engine is Rust compiled to
 > WebAssembly and shared by every language. Express, Hono and any fetch app on Node, Bun, Deno and Cloudflare
-> Workers are supported. It needs one self-generated secret, KAGAMI_SECRET, and no account.
+> Workers are supported. It needs one self-generated secret, LURENSIC_SECRET, and no account.
 
-Coding agents that are adding Kagami to an application should follow the integration guide step by step and finish
-with `npx @agenticslabs/kagami doctor --json`.
+Coding agents that are adding Lurensic to an application should follow the integration guide step by step and finish
+with `npx @agenticslabs/lurensic doctor --json`.
 
 ## Integrate
 
@@ -19,20 +19,20 @@ with `npx @agenticslabs/kagami doctor --json`.
 
 ## Concepts
 
-- [How Kagami works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception and the event
+- [How Lurensic works](docs/guides/how-it-works.md): request lifecycle, tripwires, deception and the event
 - [Choose your setup](docs/guides/choose-your-setup.md): the path for each framework and host (Express, Hono, Cloudflare Workers, Bun, Deno, serverless) and what is not supported
 
 ## Reference
 
 - [Design](docs/DESIGN.md): architecture, the WebAssembly ABI, the rule catalogue and the configuration reference
-- [Threat model](docs/THREAT_MODEL.md): what Kagami defends against and the residual risks
+- [Threat model](docs/THREAT_MODEL.md): what Lurensic defends against and the residual risks
 - [Writing an adapter](docs/guides/new-adapter.md): the contract for new languages and frameworks
 - [Express package](packages/express/README.md)
 - [Node package](packages/node/README.md)
 
 ## Optional
 
-- [Containment and enforcement](docs/guides/containment.md): optional, off by default. Kagami cuts attacking machines off by itself
+- [Containment and enforcement](docs/guides/containment.md): optional, off by default. Lurensic cuts attacking machines off by itself
 - [Blocking at your firewall or CDN](docs/guides/firewall.md): optional recipes for contained machines
-- [Benchmark method](docs/BENCHMARK.md): how Kagami is tested against live AI pentest agents
+- [Benchmark method](docs/BENCHMARK.md): how Lurensic is tested against live AI pentest agents
 - [Contributing](CONTRIBUTING.md)

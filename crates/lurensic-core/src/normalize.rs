@@ -109,7 +109,7 @@ pub fn for_match(s: &str) -> String {
 }
 
 /// For an absolute-form request target such as `http://host:80/a/b`, the
-/// scheme and authority. Servers route these on the path alone, so Kagami
+/// scheme and authority. Servers route these on the path alone, so Lurensic
 /// must too, or every path rule and decoy can be skipped with one request.
 pub fn absolute_prefix(target: &str) -> Option<&str> {
     let scheme_end = target.find("://")?;

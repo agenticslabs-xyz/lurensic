@@ -170,7 +170,7 @@ pub struct Inspection {
     /// new event. Hosts can record it per request for analysis.
     pub rules: Vec<&'static str>,
     /// The machine is contained. In protect mode its request was answered by
-    /// Kagami and never reaches the application.
+    /// Lurensic and never reaches the application.
     pub contained: bool,
     /// The host should pass the response headers and body to `response`, so
     /// the shadow can replay this public response to contained machines.
@@ -1107,7 +1107,7 @@ impl Engine {
         let sid = self.session_id(&req.ip, req.user_agent());
         let path = normalize::norm_path(&req.path);
         // Keep public responses for the shadow. The request is checked again
-        // here rather than trusting the host, and Kagami's own replies (decoy
+        // here rather than trusting the host, and Lurensic's own replies (decoy
         // routes and bait files) are never stored.
         if !req.response_headers.is_empty()
             && (req.anonymous_get() || req.anonymous_post())

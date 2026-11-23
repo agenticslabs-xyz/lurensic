@@ -1,5 +1,5 @@
 /**
- * Enforcement outside the application. When Kagami contains a machine, the
+ * Enforcement outside the application. When Lurensic contains a machine, the
  * machine is already cut off from the app. Enforcers push the same decision
  * to the places that see traffic first, such as a CDN, a WAF, a firewall or
  * a load balancer, so the machine is stopped before it reaches the server.
@@ -105,7 +105,7 @@ export class EnforcerPipeline {
     const now = Date.now();
     if (now - this.lastWarn > 60_000) {
       this.lastWarn = now;
-      this.warn(`[kagami] enforcer "${e.name}" failed. ${(err as Error)?.message ?? err} (further enforcer errors suppressed for 60s)`);
+      this.warn(`[lurensic] enforcer "${e.name}" failed. ${(err as Error)?.message ?? err} (further enforcer errors suppressed for 60s)`);
     }
   }
 
@@ -152,7 +152,7 @@ export function formatBlocklist(machines: ContainedMachine[], format: BlocklistF
  *   {"type":"containment.started","machines":[{"target":"198.51.100.4", ...}]}
  *
  * The type is `containment.started` or `containment.released`. With `secret`
- * set, requests carry `kagami-signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`,
+ * set, requests carry `lurensic-signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`,
  * the same scheme as `webhookSink`. Redirects are never followed.
  */
 export function webhookEnforcer(opts: {
@@ -178,7 +178,7 @@ export function webhookEnforcer(opts: {
     const headers: Record<string, string> = { 'content-type': 'application/json', ...(opts.headers ?? {}) };
     if (opts.secret) {
       const t = Math.floor(Date.now() / 1000);
-      headers['kagami-signature'] = `t=${t},v1=${await hmacSha256Hex(opts.secret, `${t}.${body}`)}`;
+      headers['lurensic-signature'] = `t=${t},v1=${await hmacSha256Hex(opts.secret, `${t}.${body}`)}`;
     }
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {

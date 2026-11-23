@@ -1,12 +1,12 @@
-// A small Hono shop API with Kagami, used to test Kagami on real hosts. The
+// A small Hono shop API with Lurensic, used to test Lurensic on real hosts. The
 // same app runs on Node (server.mjs, for Render, a VPS or Docker) and on
 // Cloudflare Workers (worker.mjs).
 //
-// Settings come from the environment: KAGAMI_SECRET, KAGAMI_MODE and
-// KAGAMI_CONTAINMENT. ECHO_PATH turns on a route that shows how the host
+// Settings come from the environment: LURENSIC_SECRET, LURENSIC_MODE and
+// LURENSIC_CONTAINMENT. ECHO_PATH turns on a route that shows how the host
 // passes the visitor's address. Leave it unset outside of testing.
 import { Hono } from 'hono';
-import { kagami, peerAddress } from '@agenticslabs/kagami-hono';
+import { lurensic, peerAddress } from '@agenticslabs/lurensic-hono';
 
 const PRODUCTS = [
   { id: 1, name: 'Trail Runner 2', price: 129 },
@@ -29,7 +29,7 @@ const setting = (c, name) => (typeof c.env?.[name] === 'string' ? c.env[name] : 
 
 export function createApp(options = {}) {
   const app = new Hono();
-  const guard = kagami(options);
+  const guard = lurensic(options);
   app.use(guard);
 
   app.get('/', (c) => c.html(PAGE));
@@ -41,7 +41,7 @@ export function createApp(options = {}) {
   app.post('/newsletter', (c) => c.html('<!doctype html><html><body><p>Thanks for signing up.</p></body></html>', 201));
 
   // Diagnostics for testing a host. Shows the request headers, the address
-  // the runtime reports, and whether Kagami has contained this visitor.
+  // the runtime reports, and whether Lurensic has contained this visitor.
   app.get('/:echo', async (c, next) => {
     const echo = setting(c, 'ECHO_PATH');
     if (!echo || c.req.param('echo') !== echo) return next();
@@ -50,8 +50,8 @@ export function createApp(options = {}) {
     return c.json({
       peer: peerAddress(c.req.raw, c.env),
       headers,
-      kagami: c.get('kagami') ? { contained: c.get('kagami').contained, state: c.get('kagami').state } : null,
-      contained: guard.kagami.contained().map((m) => ({ target: m.target, reason: m.reason, until: new Date(m.until).toISOString() })),
+      lurensic: c.get('lurensic') ? { contained: c.get('lurensic').contained, state: c.get('lurensic').state } : null,
+      contained: guard.lurensic.contained().map((m) => ({ target: m.target, reason: m.reason, until: new Date(m.until).toISOString() })),
     });
   });
 

@@ -1,17 +1,17 @@
 {
-  "name": "@agenticslabs/kagami-hono",
+  "name": "@agenticslabs/lurensic-hono",
   "version": "0.1.0",
-  "description": "Kagami middleware for Hono, on Node, Bun, Deno and Cloudflare Workers. It detects AI agents and automated attackers with tripwires that instructions to the agent cannot get around.",
+  "description": "Lurensic middleware for Hono, on Node, Bun, Deno and Cloudflare Workers. It detects AI agents and automated attackers with tripwires that instructions to the agent cannot get around.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
-  "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
+  "homepage": "https://github.com/agenticslabs-xyz/lurensic#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agenticslabs-xyz/kagami.git",
+    "url": "git+https://github.com/agenticslabs-xyz/lurensic.git",
     "directory": "packages/hono"
   },
   "bugs": {
-    "url": "https://github.com/agenticslabs-xyz/kagami/issues"
+    "url": "https://github.com/agenticslabs-xyz/lurensic/issues"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -42,7 +42,7 @@
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "dependencies": {
-    "@agenticslabs/kagami": "workspace:*"
+    "@agenticslabs/lurensic": "workspace:*"
   },
   "peerDependencies": {
     "hono": ">=4"

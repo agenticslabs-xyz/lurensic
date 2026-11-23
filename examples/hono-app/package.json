@@ -8,7 +8,7 @@
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "dependencies": {
-    "@agenticslabs/kagami-hono": "workspace:*",
+    "@agenticslabs/lurensic-hono": "workspace:*",
     "@hono/node-server": "^2.1.8",
     "hono": "^4.13.18"
   },
