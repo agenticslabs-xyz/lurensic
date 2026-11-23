@@ -22,7 +22,7 @@ pub struct Entry {
     pub source: String,
     /// What an edge firewall should block. An IPv4 address or an IPv6 /64.
     /// Empty when the address is unknown, for example for a machine linked
-    /// through a honeytoken before Kagami saw its address.
+    /// through a honeytoken before Lurensic saw its address.
     pub target: String,
     /// The target is a public address. Enforcers outside the application,
     /// such as an edge firewall, act only on public targets, so a bench run
@@ -190,14 +190,14 @@ const REFRESH_MS: u64 = 5 * 60 * 1000;
 /// Only responses that a shared HTTP cache could store are kept. That means
 /// a GET request without a cookie or an `Authorization` header, a response
 /// without `Set-Cookie`, and no `Cache-Control: private` or `no-store`.
-/// Anything Kagami replays was already public, so a contained attacker sees
+/// Anything Lurensic replays was already public, so a contained attacker sees
 /// nothing that any anonymous visitor could not see.
 ///
 /// The one exception is how the app answers a failed form post, such as a
 /// wrong password, so a contained attacker's login looks like the app's own.
 /// That answer is kept only for anonymous posts, and only after two
 /// submissions with different bodies received byte-identical responses, which
-/// shows the page does not repeat what the visitor sent. Kagami keeps a hash
+/// shows the page does not repeat what the visitor sent. Lurensic keeps a hash
 /// of each request body for that comparison and never the body itself.
 pub struct Shadow {
     map: HashMap<String, Stored>,

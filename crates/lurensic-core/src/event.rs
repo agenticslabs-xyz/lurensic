@@ -13,7 +13,7 @@ use crate::session::State;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-pub const SCHEMA: &str = "kagami.event/v1";
+pub const SCHEMA: &str = "lurensic.event/v1";
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 /// Fields that carry attacker-controlled text. Consumers (SIEM rules, chat
 /// alerts, AI triage assistants) must treat them as data, never instructions.

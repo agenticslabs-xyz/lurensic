@@ -1,7 +1,7 @@
 /**
  * Helpers for deciding how to respond to an event in `onDetect`.
  */
-import type { KagamiEvent } from './types.js';
+import type { LurensicEvent } from './types.js';
 
 /**
  * True when a browser was sent to the request from another site, or from
@@ -9,7 +9,7 @@ import type { KagamiEvent } from './types.js';
  * a link or submitting a form there. Browsers set this themselves, so for an
  * honest visitor it is reliable. Scripts send nothing and are never lured.
  */
-export function wasLured(event: KagamiEvent): boolean {
+export function wasLured(event: LurensicEvent): boolean {
   const site = event.request?.site;
   return site === 'cross-site' || site === 'same-site';
 }
@@ -23,7 +23,7 @@ export function wasLured(event: KagamiEvent): boolean {
  * Events it rejects are still real detections. Alert on them instead, and
  * block the address unless `wasLured` is true.
  */
-export function safeToActOnSubject(event: KagamiEvent): boolean {
+export function safeToActOnSubject(event: LurensicEvent): boolean {
   if (!event.subject || wasLured(event)) return false;
   if ((event.evidence as { location?: unknown } | undefined)?.location === 'cookie') return false;
   return true;

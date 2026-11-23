@@ -1,17 +1,17 @@
 {
-  "name": "@agenticslabs/kagami",
+  "name": "@agenticslabs/lurensic",
   "version": "0.1.0",
-  "description": "Kagami runtime for Node, Bun, Deno and Cloudflare Workers. The engine, the onDetect callback, event sinks, a web-standard fetch adapter and the CLI, for deception-based detection of AI-driven and automated attacks.",
+  "description": "Lurensic runtime for Node, Bun, Deno and Cloudflare Workers. The engine, the onDetect callback, event sinks, a web-standard fetch adapter and the CLI, for deception-based detection of AI-driven and automated attacks.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
-  "homepage": "https://github.com/agenticslabs-xyz/kagami#readme",
+  "homepage": "https://github.com/agenticslabs-xyz/lurensic#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agenticslabs-xyz/kagami.git",
+    "url": "git+https://github.com/agenticslabs-xyz/lurensic.git",
     "directory": "packages/node"
   },
   "bugs": {
-    "url": "https://github.com/agenticslabs-xyz/kagami/issues"
+    "url": "https://github.com/agenticslabs-xyz/lurensic/issues"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +25,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "kagami": "./dist/cli.js"
+    "lurensic": "./dist/cli.js"
   },
   "files": [
     "dist",

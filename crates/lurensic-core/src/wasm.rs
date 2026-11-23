@@ -1,9 +1,9 @@
 //! WebAssembly host ABI, version 1. The module has four exports and no imports.
 //!
-//! * `kagami_abi_version() -> u32` returns the ABI version.
-//! * `kagami_alloc(len: usize) -> *mut u8` allocates a buffer for the host to write input into.
-//! * `kagami_free(ptr: *mut u8, len: usize)` frees input and output buffers.
-//! * `kagami_call(ptr, len) -> u64` takes a JSON envelope and returns a JSON
+//! * `lurensic_abi_version() -> u32` returns the ABI version.
+//! * `lurensic_alloc(len: usize) -> *mut u8` allocates a buffer for the host to write input into.
+//! * `lurensic_free(ptr: *mut u8, len: usize)` frees input and output buffers.
+//! * `lurensic_call(ptr, len) -> u64` takes a JSON envelope and returns a JSON
 //!   response packed as `(out_ptr << 32) | out_len`.
 //!
 //! The module imports nothing from the host, so it has no clock, no randomness
@@ -17,20 +17,20 @@ thread_local! {
 }
 
 #[no_mangle]
-pub extern "C" fn kagami_abi_version() -> u32 {
+pub extern "C" fn lurensic_abi_version() -> u32 {
     crate::ABI_VERSION
 }
 
 #[no_mangle]
-pub extern "C" fn kagami_alloc(len: usize) -> *mut u8 {
+pub extern "C" fn lurensic_alloc(len: usize) -> *mut u8 {
     let buf = vec![0u8; len].into_boxed_slice();
     Box::into_raw(buf) as *mut u8
 }
 
 /// # Safety
-/// `ptr`/`len` must come from `kagami_alloc` or `kagami_call` and be freed once.
+/// `ptr`/`len` must come from `lurensic_alloc` or `lurensic_call` and be freed once.
 #[no_mangle]
-pub unsafe extern "C" fn kagami_free(ptr: *mut u8, len: usize) {
+pub unsafe extern "C" fn lurensic_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
         return;
     }
@@ -38,9 +38,9 @@ pub unsafe extern "C" fn kagami_free(ptr: *mut u8, len: usize) {
 }
 
 /// # Safety
-/// `ptr`/`len` must describe a live buffer obtained from `kagami_alloc`.
+/// `ptr`/`len` must describe a live buffer obtained from `lurensic_alloc`.
 #[no_mangle]
-pub unsafe extern "C" fn kagami_call(ptr: *const u8, len: usize) -> u64 {
+pub unsafe extern "C" fn lurensic_call(ptr: *const u8, len: usize) -> u64 {
     let input = std::slice::from_raw_parts(ptr, len);
     let out = RUNTIME.with(|rt| rt.borrow_mut().handle(input));
     let bytes = out.into_bytes().into_boxed_slice();

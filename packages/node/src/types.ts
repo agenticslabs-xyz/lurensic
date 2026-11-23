@@ -6,9 +6,9 @@ export type SessionState = 'clean' | 'suspicious' | 'flagged';
 
 export const SEVERITY_RANK: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
 
-/** One Kagami audit event (schema `kagami.event/v1`). */
-export interface KagamiEvent {
-  schema: 'kagami.event/v1';
+/** One Lurensic audit event (schema `lurensic.event/v1`). */
+export interface LurensicEvent {
+  schema: 'lurensic.event/v1';
   id: string;
   seq: number;
   ts: string;
@@ -58,7 +58,7 @@ export interface KagamiEvent {
  */
 export interface EventRecord {
   line: string;
-  event: KagamiEvent;
+  event: LurensicEvent;
 }
 
 export interface Sink {
@@ -87,14 +87,14 @@ export interface HttpRequest {
   bodyError?: string;
   /**
    * The raw address of the connection's peer (the socket's remote address).
-   * When set, Kagami works out the client address itself from the peer and the
+   * When set, Lurensic works out the client address itself from the peer and the
    * forwarding headers, following `clientAddress`, and `ip` is ignored.
    */
   peer?: string;
   /**
    * Your app's id for the sender, such as an account id. It is copied into
    * every event the request produces, so never pass a cookie, token or
-   * session secret. It is a label and never changes how Kagami groups requests.
+   * session secret. It is a label and never changes how Lurensic groups requests.
    */
   subject?: string;
 }
@@ -117,7 +117,7 @@ export interface Verdict {
   rules: string[];
   /**
    * The client's machine is contained. In protect mode `action` is then a
-   * Kagami response and the request must not reach the application.
+   * Lurensic response and the request must not reach the application.
    */
   contained: boolean;
   /**
@@ -125,11 +125,11 @@ export interface Verdict {
    * so contained machines can be served a copy of this public page.
    */
   capture: boolean;
-  /** Machines contained by this request. Kagami hands them to its enforcers. */
+  /** Machines contained by this request. Lurensic hands them to its enforcers. */
   containment: ContainedMachine[];
 }
 
-/** A machine Kagami has cut off from the application. */
+/** A machine Lurensic has cut off from the application. */
 export interface ContainedMachine {
   /** Keyed hash of the machine's address, as in `Verdict.source`. */
   source: string;
@@ -160,9 +160,9 @@ export interface Enforcer {
   publicOnly?: boolean;
   /** Called with newly contained machines. */
   contain(machines: ContainedMachine[]): Promise<void>;
-  /** Called with machines released early through `kagami.release`. */
+  /** Called with machines released early through `lurensic.release`. */
   release?(machines: ContainedMachine[]): Promise<void>;
-  /** Called once when Kagami starts. Start timers here, and unref them. */
+  /** Called once when Lurensic starts. Start timers here, and unref them. */
   start?(): void;
   close?(): Promise<void>;
 }
@@ -188,7 +188,7 @@ export interface ContainmentOptions {
   shadowCacheBytes?: number;
 }
 
-export interface KagamiOptions {
+export interface LurensicOptions {
   /**
    * Called with each detection, so your code decides what happens next, such
    * as locking an account, blocking an address or alerting someone. It runs
@@ -196,24 +196,24 @@ export interface KagamiOptions {
    * request. Receives `detection` and `session` events at or above
    * `detectSeverity`. The other sinks still run.
    */
-  onDetect?: (event: KagamiEvent) => void | Promise<void>;
+  onDetect?: (event: LurensicEvent) => void | Promise<void>;
   /** The lowest severity passed to `onDetect`. Default `low`. */
   detectSeverity?: Severity;
   /**
    * Your site's public host name, such as `shop.example.com`, which decoys name
-   * in fake files and records. Also read from KAGAMI_SITE. When unset, Kagami
+   * in fake files and records. Also read from LURENSIC_SITE. When unset, Lurensic
    * uses the first real host name it sees and keeps it, so decoys never change
    * with the Host header an attacker sends. Set it when several copies of the
    * app run, so they all agree.
    */
   site?: string;
-  /** Deployment secret (>= 32 chars). Defaults to KAGAMI_SECRET from the environment. */
+  /** Deployment secret (>= 32 chars). Defaults to LURENSIC_SECRET from the environment. */
   secret?: string;
-  /** `observe` (default) never changes a response. `protect` enables deception. Also read from `KAGAMI_MODE`. */
+  /** `observe` (default) never changes a response. `protect` enables deception. Also read from `LURENSIC_MODE`. */
   mode?: Mode;
-  /** Kill switch. Env `KAGAMI_DISABLED=1` also disables Kagami. */
+  /** Kill switch. Env `LURENSIC_DISABLED=1` also disables Lurensic. */
   enabled?: boolean;
-  /** Opt-in decoys can also be turned on with KAGAMI_DECOYS, for example `json,forms,spec` or `all`. */
+  /** Opt-in decoys can also be turned on with LURENSIC_DECOYS, for example `json,forms,spec` or `all`. */
   decoys?: {
     /** Bait comment in the home page and a keyed subset of other HTML documents (protect mode). Default true. */
     html?: boolean;
@@ -232,8 +232,8 @@ export interface KagamiOptions {
      * is a honeytoken (protect mode). Six other common description paths,
      * such as `/v3/api-docs`, redirect to it. Default false. Enable it if your
      * app publishes no description at those paths, or list its real paths in
-     * `reservedPaths`. `kagami doctor` checks them all. Also on with
-     * `KAGAMI_DECOYS=spec`.
+     * `reservedPaths`. `lurensic doctor` checks them all. Also on with
+     * `LURENSIC_DECOYS=spec`.
      */
     spec?: boolean;
     /** Answer derived decoy routes (protect mode). Default true. */
@@ -249,14 +249,14 @@ export interface KagamiOptions {
   /** Path prefixes skipped entirely, e.g. `['/healthz', '/static']`. */
   ignorePaths?: string[];
   /**
-   * Let Kagami work out the real client address from the connection and the
+   * Let Lurensic work out the real client address from the connection and the
    * forwarding headers, trusting headers only from your own proxies and, with
    * `cloudflare`, `CF-Connecting-IP` only from Cloudflare's published ranges.
    * Adapters then pass `peer`. This matters for containment, because a
    * trusted forged header would let an attacker get an innocent address blocked.
    *
    * Use a preset name (`'cloudflare'`, `'render'` or `'none'`) or write the
-   * setting out. Without this option Kagami reads `KAGAMI_PROXY`, and on
+   * setting out. Without this option Lurensic reads `LURENSIC_PROXY`, and on
    * Render, where `RENDER=true`, it uses the Render preset by itself.
    */
   clientAddress?: ClientAddressPreset | ClientAddressSetting;
@@ -266,7 +266,7 @@ export interface KagamiOptions {
   sinks?: Sink[];
   /**
    * Cut machines that trip a tripwire off from the application. Off by
-   * default. `true` uses the defaults. Also read from KAGAMI_CONTAINMENT (on, shadow or block). Enforced in protect mode only. In
+   * default. `true` uses the defaults. Also read from LURENSIC_CONTAINMENT (on, shadow or block). Enforced in protect mode only. In
    * observe mode it is a dry run that reports `containment.started` events.
    */
   containment?: boolean | ContainmentOptions;
@@ -279,11 +279,11 @@ export interface KagamiOptions {
    * A single long-running server does not need one.
    *
    * With the fetch and Hono adapters on Cloudflare Workers, a KV binding named
-   * KAGAMI_STORE is used automatically, and `store` may also be a function
+   * LURENSIC_STORE is used automatically, and `store` may also be a function
    * that receives the bindings, such as `(env) => env.MY_KV`.
    */
   store?: unknown;
-  /** Where contained machines are enforced besides Kagami itself, such as a blocklist file, a webhook or a CDN. */
+  /** Where contained machines are enforced besides Lurensic itself, such as a blocklist file, a webhook or a CDN. */
   enforcers?: Enforcer[];
   /** Max request body bytes inspected. Default 16 KiB. */
   maxBodyBytes?: number;
@@ -292,16 +292,16 @@ export interface KagamiOptions {
   /** Identifies this process in events. Random by default. */
   instanceId?: string;
   /**
-   * Where KAGAMI_SECRET, KAGAMI_MODE, KAGAMI_DECOYS, KAGAMI_CONTAINMENT and KAGAMI_DISABLED
+   * Where LURENSIC_SECRET, LURENSIC_MODE, LURENSIC_DECOYS, LURENSIC_CONTAINMENT and LURENSIC_DISABLED
    * are read from. Defaults to `process.env`. The fetch and Hono adapters pass
    * the Cloudflare Workers bindings here, since Workers have no `process.env`.
    */
   env?: Record<string, string | undefined>;
-  /** Where Kagami reports its own problems, and with `info`, one line at startup. Defaults to `console`. */
+  /** Where Lurensic reports its own problems, and with `info`, one line at startup. Defaults to `console`. */
   logger?: { warn(message: string): void; info?(message: string): void };
 }
 
-export interface KagamiStats {
+export interface LurensicStats {
   enabled: boolean;
   mode: Mode;
   deployment: string | null;
@@ -316,7 +316,7 @@ export interface KagamiStats {
   faults: number;
 }
 
-/** A response, as passed to `Kagami.response`. */
+/** A response, as passed to `Lurensic.response`. */
 export interface ResponseSample {
   /** Response headers. Pass `content-type`, `cache-control`, `location`, and `set-cookie` when present. */
   headers: Array<[string, string]>;

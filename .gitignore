@@ -11,7 +11,7 @@ packages/node/wasm/
 !.env.example
 .DS_Store
 bench-runs/
-.kagami-secret
+.lurensic-secret
 .bench-private-words
 packages/node/src/engine-bytes.ts
 packages/node/src/build-info.ts

@@ -1,8 +1,8 @@
 /**
- * How Kagami finds the visitor's address behind a proxy or CDN.
+ * How Lurensic finds the visitor's address behind a proxy or CDN.
  *
  * A setting can be written out in full, or named by a preset for a setup we
- * have verified on a live host. On Render, Kagami picks the Render preset by
+ * have verified on a live host. On Render, Lurensic picks the Render preset by
  * itself, because Render sets `RENDER=true` for every service.
  */
 
@@ -35,7 +35,7 @@ export interface ResolvedClientAddress {
   /** The setting to use, or undefined when the adapter's own address is used. */
   setting?: ClientAddressSetting;
   /** Where it came from, for messages. */
-  from: 'option' | 'KAGAMI_PROXY' | 'RENDER' | 'none';
+  from: 'option' | 'LURENSIC_PROXY' | 'RENDER' | 'none';
   /** The preset used, when one was. */
   preset?: string;
 }
@@ -48,7 +48,7 @@ function preset(name: string, warn: (m: string) => void, from: ResolvedClientAdd
     return { setting: { ...p, ...(p.trustedProxies && { trustedProxies: [...p.trustedProxies] }) }, from, preset: key };
   }
   warn(
-    `[kagami] "${name}" is not a client address preset, so no forwarding headers are trusted. ` +
+    `[lurensic] "${name}" is not a client address preset, so no forwarding headers are trusted. ` +
       `Use ${Object.keys(CLIENT_ADDRESS_PRESETS).join(', ')} or none, or write the setting out as an object.`,
   );
   return { from: 'none' };
@@ -56,7 +56,7 @@ function preset(name: string, warn: (m: string) => void, from: ResolvedClientAdd
 
 /**
  * The client address setting, in this order. The `clientAddress` option, as
- * an object or a preset name, then `KAGAMI_PROXY`, then the Render preset
+ * an object or a preset name, then `LURENSIC_PROXY`, then the Render preset
  * when `RENDER=true`. Otherwise none, and the adapter's own address is used.
  */
 export function resolveClientAddress(
@@ -66,8 +66,8 @@ export function resolveClientAddress(
 ): ResolvedClientAddress {
   if (option && typeof option === 'object') return { setting: option, from: 'option' };
   if (typeof option === 'string') return preset(option, warn, 'option');
-  const named = env.KAGAMI_PROXY;
-  if (typeof named === 'string' && named.trim() !== '') return preset(named, warn, 'KAGAMI_PROXY');
+  const named = env.LURENSIC_PROXY;
+  if (typeof named === 'string' && named.trim() !== '') return preset(named, warn, 'LURENSIC_PROXY');
   if (env.RENDER === 'true') return preset('render', warn, 'RENDER');
   return { from: 'none' };
 }
@@ -77,6 +77,6 @@ export function describeClientAddress(r: ResolvedClientAddress): string {
   if (r.preset === 'none') return `Visitor addresses come from the connection, because ${r.from === 'option' ? 'clientAddress' : r.from} is none.`;
   if (!r.setting) return 'No address setting is in use, so visitor addresses come from the framework or the connection.';
   if (r.from === 'RENDER') return 'Visitor addresses use the render preset, because RENDER=true.';
-  if (r.from === 'KAGAMI_PROXY') return `Visitor addresses use the ${r.preset} preset from KAGAMI_PROXY.`;
+  if (r.from === 'LURENSIC_PROXY') return `Visitor addresses use the ${r.preset} preset from LURENSIC_PROXY.`;
   return r.preset ? `Visitor addresses use the ${r.preset} preset.` : 'Visitor addresses use the clientAddress setting.';
 }

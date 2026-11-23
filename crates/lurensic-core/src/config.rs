@@ -234,14 +234,14 @@ impl Config {
         if self.secret.trim().is_empty() {
             return Err(ConfigError::new(
                 "secret_missing",
-                "No Kagami secret configured. Set KAGAMI_SECRET (generate one with `npx @agenticslabs/kagami secret` or `openssl rand -hex 32`).",
+                "No Lurensic secret configured. Set LURENSIC_SECRET (generate one with `npx @agenticslabs/lurensic secret` or `openssl rand -hex 32`).",
             ));
         }
         if self.secret.chars().count() < MIN_SECRET_LEN {
             return Err(ConfigError::new(
                 "secret_too_short",
                 format!(
-                    "The Kagami secret must be at least {MIN_SECRET_LEN} characters. Generate one with `npx @agenticslabs/kagami secret` or `openssl rand -hex 32`."
+                    "The Lurensic secret must be at least {MIN_SECRET_LEN} characters. Generate one with `npx @agenticslabs/lurensic secret` or `openssl rand -hex 32`."
                 ),
             ));
         }

@@ -1,6 +1,6 @@
 //! Per-deployment decoys, derived from the secret.
 //!
-//! Two deployments of Kagami expose different decoy routes, parameter names
+//! Two deployments of Lurensic expose different decoy routes, parameter names
 //! and field names, so there is no global list an attacker can tell their
 //! agent to avoid. Reserved application paths and names are never used.
 

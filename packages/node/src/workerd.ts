@@ -4,7 +4,7 @@
  * engine is imported as a .wasm module, which wrangler compiles. Workers have
  * no file system, so the features that write files explain what to use instead.
  */
-import engine from '../wasm/kagami_core.wasm';
+import engine from '../wasm/lurensic_core.wasm';
 import { setEngine } from './core.js';
 import { needsFileSystem } from './platform.js';
 
@@ -21,7 +21,7 @@ export function blocklistFile(): never {
 }
 
 export function runDoctor(): never {
-  throw new TypeError('kagami doctor runs on your own machine with Node. Run npx @agenticslabs/kagami doctor --url <your Worker URL>.');
+  throw new TypeError('lurensic doctor runs on your own machine with Node. Run npx @agenticslabs/lurensic doctor --url <your Worker URL>.');
 }
 
 export function formatChecks(): never {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kagami-core"]
+members = ["crates/lurensic-core"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,7 +8,7 @@ edition = "2021"
 license = "Apache-2.0"
 authors = ["Agentics Labs <https://agenticslabs.xyz>"]
 homepage = "https://agenticslabs.xyz"
-repository = "https://github.com/agenticslabs-xyz/kagami"
+repository = "https://github.com/agenticslabs-xyz/lurensic"
 rust-version = "1.80"
 
 [profile.release]

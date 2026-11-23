@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import { BUILD_ID, escapeSlack, formatSlack, Kagami, memorySink, PACKAGE_VERSION, verifyChain, webhookSink } from '../dist/index.js';
+import { BUILD_ID, escapeSlack, formatSlack, Lurensic, memorySink, PACKAGE_VERSION, verifyChain, webhookSink } from '../dist/index.js';
 
 const SECRET = 'node-test-secret-0123456789abcdef-0123456789';
 const quiet = { warn() {} };
@@ -19,41 +19,41 @@ function request(overrides = {}) {
   };
 }
 
-test('bad configuration disables Kagami instead of throwing', () => {
+test('bad configuration disables Lurensic instead of throwing', () => {
   const warnings = [];
-  const k = new Kagami({ secret: 'too-short', logger: { warn: (m) => warnings.push(m) }, sinks: [] });
+  const k = new Lurensic({ secret: 'too-short', logger: { warn: (m) => warnings.push(m) }, sinks: [] });
   assert.equal(k.isEnabled, false);
   const v = k.inspect(request({ path: '/.env' }));
   assert.deepEqual(v.action, { type: 'pass' });
   assert.match(warnings.join('\n'), /at least 32 characters/);
 });
 
-test('KAGAMI_DISABLED=1 switches Kagami off', () => {
-  process.env.KAGAMI_DISABLED = '1';
+test('LURENSIC_DISABLED=1 switches Lurensic off', () => {
+  process.env.LURENSIC_DISABLED = '1';
   try {
-    const k = new Kagami({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
+    const k = new Lurensic({ secret: SECRET, mode: 'protect', sinks: [], logger: quiet });
     assert.equal(k.isEnabled, false);
     assert.deepEqual(k.inspect(request({ path: '/.env' })).action, { type: 'pass' });
   } finally {
-    delete process.env.KAGAMI_DISABLED;
+    delete process.env.LURENSIC_DISABLED;
   }
 });
 
-test('production without a secret disables Kagami with a clear warning', () => {
+test('production without a secret disables Lurensic with a clear warning', () => {
   const prev = process.env.NODE_ENV;
   process.env.NODE_ENV = 'production';
   try {
     const warnings = [];
-    const k = new Kagami({ sinks: [], logger: { warn: (m) => warnings.push(m) } });
+    const k = new Lurensic({ sinks: [], logger: { warn: (m) => warnings.push(m) } });
     assert.equal(k.isEnabled, false);
-    assert.match(warnings[0], /KAGAMI_SECRET is not set/);
+    assert.match(warnings[0], /LURENSIC_SECRET is not set/);
   } finally {
     process.env.NODE_ENV = prev;
   }
 });
 
 test('internal faults never escape to the caller', () => {
-  const k = new Kagami({ secret: SECRET, sinks: [], logger: quiet });
+  const k = new Lurensic({ secret: SECRET, sinks: [], logger: quiet });
   // Simulate a corrupted core.
   k['core'].call = () => {
     throw new Error('boom');
@@ -65,7 +65,7 @@ test('internal faults never escape to the caller', () => {
 
 test('events flow to sinks and form a verifiable chain', async () => {
   const mem = memorySink();
-  const k = new Kagami({ secret: SECRET, sinks: [mem], logger: quiet });
+  const k = new Lurensic({ secret: SECRET, sinks: [mem], logger: quiet });
   k.inspect(request({ path: '/.env', headers: [['user-agent', 'nuclei']] }));
   k.inspect(request({ query: 'q=1%27%20OR%20%271%27%3D%271', headers: [['user-agent', 'nuclei']] }));
   await k.flush();
@@ -82,7 +82,7 @@ test('events flow to sinks and form a verifiable chain', async () => {
 
 test('sinks filter by severity', async () => {
   const highOnly = memorySink('high');
-  const k = new Kagami({ secret: SECRET, sinks: [highOnly], logger: quiet });
+  const k = new Lurensic({ secret: SECRET, sinks: [highOnly], logger: quiet });
   k.inspect(request({ path: '/.env' })); // medium
   await k.flush();
   assert.equal(highOnly.events.length, 0);
@@ -119,12 +119,12 @@ test('webhook sink enforces https, signs requests and does not follow redirects'
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}/hook`;
   try {
-    const k = new Kagami({ secret: SECRET, sinks: [webhookSink({ url, secret: 'whsec', minSeverity: 'info' })], logger: quiet });
+    const k = new Lurensic({ secret: SECRET, sinks: [webhookSink({ url, secret: 'whsec', minSeverity: 'info' })], logger: quiet });
     k.inspect(request({ path: '/.env' }));
     await k.flush();
     assert.equal(received.length, 1);
     const { headers, body } = received[0];
-    const [, t, sig] = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(headers['kagami-signature']);
+    const [, t, sig] = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(headers['lurensic-signature']);
     assert.equal(sig, createHmac('sha256', 'whsec').update(`${t}.${body}`).digest('hex'));
     const parsed = JSON.parse(body);
     assert.deepEqual(parsed.events.map((e) => e.rule), ['system.started', 'bait.path']);
@@ -135,7 +135,7 @@ test('webhook sink enforces https, signs requests and does not follow redirects'
 
 test('seal and verify', async () => {
   const mem = memorySink();
-  const k = new Kagami({ secret: SECRET, sinks: [mem], logger: quiet });
+  const k = new Lurensic({ secret: SECRET, sinks: [mem], logger: quiet });
   const sealed = k.seal(1043);
   assert.equal(k.verify(request(), sealed, 'order'), '1043');
   assert.equal(k.verify(request(), sealed.replace('1043', '1044'), 'order'), null);
@@ -144,7 +144,7 @@ test('seal and verify', async () => {
 });
 
 test('a non-trivial request costs well under a millisecond', () => {
-  const k = new Kagami({ secret: SECRET, sinks: [], logger: quiet });
+  const k = new Lurensic({ secret: SECRET, sinks: [], logger: quiet });
   const req = request({
     method: 'POST',
     path: '/api/cart',
@@ -167,13 +167,13 @@ test('a non-trivial request costs well under a millisecond', () => {
   assert.ok(perReqUs < 1000, `too slow at ${perReqUs} µs per request`);
 });
 
-test('KAGAMI_DECOYS turns on opt-in decoys, and settings in code win', () => {
+test('LURENSIC_DECOYS turns on opt-in decoys, and settings in code win', () => {
   const secret = 'env-decoys-secret-0123456789abcdef-0123456';
-  const on = new Kagami({ mode: 'protect', sinks: [], logger: { warn() {} }, env: { KAGAMI_SECRET: secret, KAGAMI_DECOYS: 'json, spec' } });
+  const on = new Lurensic({ mode: 'protect', sinks: [], logger: { warn() {} }, env: { LURENSIC_SECRET: secret, LURENSIC_DECOYS: 'json, spec' } });
   assert.equal(typeof on.manifest().decoys.spec_path, 'string');
-  const off = new Kagami({ mode: 'protect', sinks: [], logger: { warn() {} }, decoys: { spec: false }, env: { KAGAMI_SECRET: secret, KAGAMI_DECOYS: 'all' } });
+  const off = new Lurensic({ mode: 'protect', sinks: [], logger: { warn() {} }, decoys: { spec: false }, env: { LURENSIC_SECRET: secret, LURENSIC_DECOYS: 'all' } });
   assert.equal(off.manifest().decoys.spec_path, null);
-  const none = new Kagami({ mode: 'protect', sinks: [], logger: { warn() {} }, env: { KAGAMI_SECRET: secret } });
+  const none = new Lurensic({ mode: 'protect', sinks: [], logger: { warn() {} }, env: { LURENSIC_SECRET: secret } });
   assert.equal(none.manifest().decoys.spec_path, null);
 });
 
@@ -194,7 +194,7 @@ test('safeToActOnSubject only allows first-party requests with an account', asyn
 
 test('after an engine trap the rebuilt engine keeps every containment and starts a fresh chain', async () => {
   const mem = memorySink();
-  const k = new Kagami({ secret: SECRET, mode: 'protect', containment: true, sinks: [mem], logger: quiet });
+  const k = new Lurensic({ secret: SECRET, mode: 'protect', containment: true, sinks: [mem], logger: quiet });
   const route = k.manifest().decoys.routes[0];
   const attacker = { ip: '203.0.113.90', headers: [['user-agent', 'curl/7.88.1']] };
   assert.equal(k.inspect(request({ ...attacker, path: route })).contained, true);
@@ -220,25 +220,25 @@ test('after an engine trap the rebuilt engine keeps every containment and starts
   assert.equal((await verifyChain(mem.lines)).ok, true);
 });
 
-test('Kagami logs one startup line with its version, build and setup', async () => {
+test('Lurensic logs one startup line with its version, build and setup', async () => {
   const lines = [];
   const logger = { warn() {}, info: (m) => lines.push(m) };
-  const k = new Kagami({ secret: SECRET, mode: 'protect', containment: { action: 'block' }, env: { RENDER: 'true' }, sinks: [], logger });
+  const k = new Lurensic({ secret: SECRET, mode: 'protect', containment: { action: 'block' }, env: { RENDER: 'true' }, sinks: [], logger });
   await k.close();
   assert.equal(lines.length, 1, lines.join('\n'));
   assert.match(PACKAGE_VERSION, /^\d+\.\d+\.\d+/);
   assert.match(BUILD_ID, /^[0-9a-f]{12}$/);
-  assert.ok(lines[0].includes(`Kagami ${PACKAGE_VERSION} (build ${BUILD_ID}) started in protect mode.`), lines[0]);
+  assert.ok(lines[0].includes(`Lurensic ${PACKAGE_VERSION} (build ${BUILD_ID}) started in protect mode.`), lines[0]);
   assert.ok(lines[0].includes('the render preset, because RENDER=true'), lines[0]);
   assert.ok(lines[0].includes('Containment is on and answers with block.'), lines[0]);
 
   const none = [];
-  const off = new Kagami({ secret: SECRET, env: {}, sinks: [], logger: { warn() {}, info: (m) => none.push(m) } });
+  const off = new Lurensic({ secret: SECRET, env: {}, sinks: [], logger: { warn() {}, info: (m) => none.push(m) } });
   await off.close();
   assert.ok(none[0].includes('started in observe mode. No address setting is in use'), none[0]);
   assert.ok(none[0].includes('Containment is off.'), none[0]);
 
   // A custom logger without info stays quiet.
-  const silent = new Kagami({ secret: SECRET, env: {}, sinks: [], logger: quiet });
+  const silent = new Lurensic({ secret: SECRET, env: {}, sinks: [], logger: quiet });
   await silent.close();
 });

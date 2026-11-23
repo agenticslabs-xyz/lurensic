@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { after, before, test } from 'node:test';
-import { memorySink } from '@agenticslabs/kagami-express';
+import { memorySink } from '@agenticslabs/lurensic-express';
 import { createApp } from '../app.js';
 
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
@@ -31,7 +31,7 @@ before(async () => {
 });
 
 after(async () => {
-  await app.kagami.close();
+  await app.lurensic.close();
   await new Promise((r) => server.close(r));
 });
 
@@ -39,7 +39,7 @@ const get = (path, ip, ua, headers = {}) =>
   fetch(base + path, { headers: { 'user-agent': ua, 'x-forwarded-for': ip, ...headers }, redirect: 'manual' });
 
 async function eventsFor(ip) {
-  await app.kagami.flush();
+  await app.lurensic.flush();
   return sink.events.filter((e) => e.source?.ip === ip);
 }
 

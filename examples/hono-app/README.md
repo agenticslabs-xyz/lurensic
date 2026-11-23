@@ -1,15 +1,15 @@
 # Hono test app
 
-A small shop API with Kagami, used to test Kagami on real hosts. The same `app.mjs` runs on Node (`server.mjs`) and on
+A small shop API with Lurensic, used to test Lurensic on real hosts. The same `app.mjs` runs on Node (`server.mjs`) and on
 Cloudflare Workers (`worker.mjs`).
 
 ## Settings
 
 | Variable | Value |
 |---|---|
-| `KAGAMI_SECRET` | From `npx @agenticslabs/kagami secret`. Required. |
-| `KAGAMI_MODE` | `protect` for testing |
-| `KAGAMI_CONTAINMENT` | `on` or `block`. `block` makes containment easy to see, because the contained machine gets a `403`. |
+| `LURENSIC_SECRET` | From `npx @agenticslabs/lurensic secret`. Required. |
+| `LURENSIC_MODE` | `protect` for testing |
+| `LURENSIC_CONTAINMENT` | `on` or `block`. `block` makes containment easy to see, because the contained machine gets a `403`. |
 | `ECHO_PATH` | Optional. A random word. The app then answers `/<ECHO_PATH>` with the request headers, the address the runtime reported, and the contained machines. Leave it unset outside of testing. |
 
 ## Run it on Node
@@ -25,8 +25,8 @@ On a host such as Render, use a Web Service with the start command `node server.
 
 ```bash
 npx wrangler dev                  # local, with a local KV store
-npx wrangler secret put KAGAMI_SECRET
-npx wrangler kv namespace create KAGAMI_STORE   # put the id in wrangler.toml
+npx wrangler secret put LURENSIC_SECRET
+npx wrangler kv namespace create LURENSIC_STORE   # put the id in wrangler.toml
 npx wrangler deploy
 ```
 
@@ -40,7 +40,7 @@ npx wrangler deploy
 ## Test the store
 
 1. Contain a machine as above.
-2. Restart or redeploy the app, which clears Kagami's memory.
+2. Restart or redeploy the app, which clears Lurensic's memory.
 3. Request again from the contained network. With a store, the answer is still `403`. Without one, the app answers
    normally again.
 

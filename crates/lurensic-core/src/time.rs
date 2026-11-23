@@ -1,7 +1,7 @@
 //! RFC 3339 formatting without a clock or a date library. The host supplies
 //! `now_ms`; the core only formats it.
 
-/// Parse a UTC timestamp in the form Kagami writes, `2026-11-17T09:30:00.000Z`
+/// Parse a UTC timestamp in the form Lurensic writes, `2026-11-17T09:30:00.000Z`
 /// (fractional seconds optional), into milliseconds since the epoch.
 pub fn parse_rfc3339(s: &str) -> Option<u64> {
     let s = s.trim().strip_suffix('Z')?;

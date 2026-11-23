@@ -1,6 +1,6 @@
-# Kagami design
+# Lurensic design
 
-This document describes Kagami v0.1 (alpha). It is written for engineers who evaluate, deploy or contribute to Kagami.
+This document describes Lurensic v0.1 (alpha). It is written for engineers who evaluate, deploy or contribute to Lurensic.
 
 ## 1. Problem
 
@@ -24,15 +24,15 @@ Existing defences fall into two groups.
 
 1. Detect attack behaviour with **no reliance on the attacker's cooperation**.
 2. **Never interfere** with legitimate traffic or the protected application.
-3. Stay effective when the attacker has read Kagami's full source code.
+3. Stay effective when the attacker has read Lurensic's full source code.
 4. Install in one line with safe defaults, and run in any language through one shared core.
 5. Produce evidence a security team can trust. Events are structured, attributed to a session and tamper evident.
 
 **Non-goals**
 
-- Filtering requests. Kagami is not a WAF and does not block requests because of what they contain. It cuts off a machine only after that machine trips a wire (see [Containment](#61-containment)). Payload filtering and volume limits belong to the WAF or CDN, which can use Kagami's verdicts.
-- Hack-back. Kagami does no counter-exploitation and sends no instructions that turn the attacker's tools against their operator.
-- Replacing secure coding. Kagami raises the cost of attacking. It does not fix vulnerabilities.
+- Filtering requests. Lurensic is not a WAF and does not block requests because of what they contain. It cuts off a machine only after that machine trips a wire (see [Containment](#61-containment)). Payload filtering and volume limits belong to the WAF or CDN, which can use Lurensic's verdicts.
+- Hack-back. Lurensic does no counter-exploitation and sends no instructions that turn the attacker's tools against their operator.
+- Replacing secure coding. Lurensic raises the cost of attacking. It does not fix vulnerabilities.
 
 ## 3. Principles
 
@@ -51,8 +51,8 @@ Existing defences fall into two groups.
 flowchart TB
     subgraph host["Host process (Node, Bun, Deno or Cloudflare Workers today)"]
         AD["Adapter, Express, Hono or fetch<br/>maps requests and responses,<br/>decorates them, captures public responses"]
-        RT["Runtime, @agenticslabs/kagami<br/>fail-open wrapper, kill switch, secret,<br/>JSON envelope to and from the WASM ABI"]
-        CORE["kagami-core (WASM)<br/>rules, decoys, honeytokens, sessions,<br/>containment, shadow, client address, audit log<br/>no imports, so no clock, no I/O, no randomness"]
+        RT["Runtime, @agenticslabs/lurensic<br/>fail-open wrapper, kill switch, secret,<br/>JSON envelope to and from the WASM ABI"]
+        CORE["lurensic-core (WASM)<br/>rules, decoys, honeytokens, sessions,<br/>containment, shadow, client address, audit log<br/>no imports, so no clock, no I/O, no randomness"]
         SINKS["Event sinks<br/>stdout, file, webhook, Slack"]
         ENF["Enforcers<br/>blocklist file, webhook, callback,<br/>and the store writer"]
         AD --> RT --> CORE
@@ -73,10 +73,10 @@ The WebAssembly module exports four functions and imports none.
 
 | Export | Purpose |
 |---|---|
-| `kagami_abi_version() -> u32` | The host refuses to run an unknown ABI |
-| `kagami_alloc(len) -> ptr` | The host writes the request envelope here |
-| `kagami_free(ptr, len)` | The host frees the input and output buffers |
-| `kagami_call(ptr, len) -> u64` | Takes the JSON envelope and returns `(out_ptr << 32) \| out_len` |
+| `lurensic_abi_version() -> u32` | The host refuses to run an unknown ABI |
+| `lurensic_alloc(len) -> ptr` | The host writes the request envelope here |
+| `lurensic_free(ptr, len)` | The host frees the input and output buffers |
+| `lurensic_call(ptr, len) -> u64` | Takes the JSON envelope and returns `(out_ptr << 32) \| out_len` |
 
 The host sends `{"op": "...", "args": {...}}`. The core answers with `{"ok": true, "result": ...}` or
 `{"ok": false, "error": {"code", "message"}}`. The operations are `init`, `inspect`, `response`,
@@ -128,7 +128,7 @@ own record by creating many new sessions.
 
 ### 5.1 Tripwires (high confidence, instant flag)
 
-**Honeytokens.** Kagami serves fake credentials in bait files (protect mode) and HTML comments. Each token encodes the issuing session's tag and a truncated MAC.
+**Honeytokens.** Lurensic serves fake credentials in bait files (protect mode) and HTML comments. Each token encodes the issuing session's tag and a truncated MAC.
 
 | Kind | Layout | Length |
 |---|---|---|
@@ -153,7 +153,7 @@ Changing or stripping the seal is reported as `tamper.sealed_value`. Knowing the
 other is a field added to JSON object responses and, as a hidden input, to POST forms (both opt-in). The field
 triggers only when its value *changes*. Honest clients that send whole objects back with PUT, and browsers that
 submit a form, echo it unchanged, so they never trigger it. In the second live benchmark round an agent that was
-told Kagami might be present avoided every bait file and comment but treated this field as real app data, so
+told Lurensic might be present avoided every bait file and comment but treated this field as real app data, so
 tripwires shaped like ordinary app data are the ones to extend.
 
 **Decoy routes.** Each deployment has two decoy routes, such as `/api/v1/partner/billing-sync`, derived from the
@@ -166,13 +166,13 @@ the route stays shut. Once open they return fabricated records with cursor pagin
 be exactly one the route issued to the same machine, else the answer is `400 {"error":"invalid cursor"}`, as a
 real API refuses a cursor it did not issue. `page=N` is read leniently.
 
-**One site name.** Fake files, the decoy description and decoy records name the site. Kagami uses `site` (or
-`KAGAMI_SITE`) when set, else the first real host name it sees, and keeps it. Addresses and single-label names such
+**One site name.** Fake files, the decoy description and decoy records name the site. Lurensic uses `site` (or
+`LURENSIC_SITE`) when set, else the first real host name it sees, and keeps it. Addresses and single-label names such
 as `localhost` are not kept. A fake file that changed with the Host header an attacker sends would prove it was
 generated.
 
-**Decoy API description** (opt-in, `decoys.spec` or `KAGAMI_DECOYS=spec`). AI agents look for an API description
-first and test every operation it lists. In protect mode Kagami serves an OpenAPI 3 document at `/openapi.json` or
+**Decoy API description** (opt-in, `decoys.spec` or `LURENSIC_DECOYS=spec`). AI agents look for an API description
+first and test every operation it lists. In protect mode Lurensic serves an OpenAPI 3 document at `/openapi.json` or
 `/swagger.json`, chosen per deployment, because those are the paths agents try first. The other common description
 paths (the other of those two, `/api/openapi.json`, `/api/swagger.json`, `/v3/api-docs`, `/v2/api-docs` and
 `/api-docs.json`) answer with a `302` redirect to it, the way documentation middleware does. The same document under
@@ -181,7 +181,7 @@ description moves to the next free path. It describes a separate partner API who
 an agent tries is a `decoy.route` hit. Its description carries a sandbox key, a honeytoken of kind `spec_sandbox_key`
 bound to the machine that read it, which unlocks the decoy routes' fake records. Fetching the description is only the
 low signal `decoy.spec`, because API tools and monitors fetch descriptions too. It is opt-in because an app may
-publish its own description at one of these paths. `kagami doctor` checks every one of them and says whether it is
+publish its own description at one of these paths. `lurensic doctor` checks every one of them and says whether it is
 safe to turn on.
 
 **Unsigned JWTs.** A token in an authorization header, cookie, query or body value whose header says `alg: none` in
@@ -192,7 +192,7 @@ a containment trigger, because a sibling subdomain can plant a cookie in a visit
 
 **Decoy secret.** The fake `.env` carries a `SESSION_SECRET`, fixed per deployment. An agent that believes it is real
 signs its own session cookies and tokens with it, to become another user or raise its privileges. No honest client knows the secret, so
-anything signed with it raises `tamper.decoy_secret`. Kagami checks `express-session` and `cookie-parser` signed
+anything signed with it raises `tamper.decoy_secret`. Lurensic checks `express-session` and `cookie-parser` signed
 cookies (`s:<value>.<sig>`, HMAC-SHA256), `cookie-session` pairs (`name` with `name.sig`, HMAC-SHA1, SHA-256 or
 SHA-512 over `name=value`) and JWTs with `alg` HS256, HS384 or HS512 in a cookie, an authorization header or a query
 or body value. The evidence holds the format, where it was, the cookie name and the algorithm, never the cookie,
@@ -238,7 +238,7 @@ writes, such as markup, a hostname, a CIDR range or an encoded line break. Priva
 it, because real proxy chains contain them. `request.malformed_body` fires when the host's body parser rejects the
 body. The Express adapter still inspects such requests, using the raw text from the parser error, so payloads inside
 a broken body are found as well. `request.absolute_target` fires when the request line holds a full URL
-(`GET http://host/path HTTP/1.1`). Browsers send that form only to proxies. Kagami strips the scheme and host and
+(`GET http://host/path HTTP/1.1`). Browsers send that form only to proxies. Lurensic strips the scheme and host and
 handles the request exactly like one for the path alone, as the server's router does.
 
 Info level rules add to the score but never produce a standalone event. They appear in the `session.flagged` summary.
@@ -256,7 +256,7 @@ Info level rules add to the score but never produce a standalone event. They app
 | Tarpit | **off** | Flagged sessions are delayed by 0.8 to 2.5 seconds with jitter |
 
 Decoy responses go through the app's normal response path, so they carry the same headers as real
-responses (for example `x-powered-by` and security headers). Kagami adds no header, cookie or fixed marker anywhere.
+responses (for example `x-powered-by` and security headers). Lurensic adds no header, cookie or fixed marker anywhere.
 
 ### 6.1 Containment
 
@@ -278,10 +278,10 @@ not contain the sender. Without this, an attacker could make a real visitor's br
 from a hidden form and get that visitor locked out.
 
 **Duration.** A machine stays contained for `ttl_secs` (one day by default) after its last trigger.
-`kagami.release(ip)` ends it early. Contained machines are held in a bounded table (`max_entries`), which drops the
+`lurensic.release(ip)` ends it early. Contained machines are held in a bounded table (`max_entries`), which drops the
 entry closest to expiry first when full. Ignored paths, such as health checks, are never contained.
 
-**Action.** With `block`, Kagami answers `403 Forbidden`. With `shadow`, the default, Kagami answers from copies of
+**Action.** With `block`, Lurensic answers `403 Forbidden`. With `shadow`, the default, Lurensic answers from copies of
 public responses and never from the live application.
 
 1. The adapter passes a response to the core only when the inspection asked for it (`capture`), which happens for a
@@ -296,7 +296,7 @@ public responses and never from the live application.
    because it would echo only the queries visitors happened to send. Such pages always get the bare copy, so every
    query is answered the same way.
 4. A contained POST, PUT, PATCH or DELETE is answered the way the app answers a failed one, such as its own wrong
-   password page with its own status, else the bare path's copy or the 404. Kagami learns that answer from anonymous
+   password page with its own status, else the bare path's copy or the 404. Lurensic learns that answer from anonymous
    requests (no cookie, no `Authorization`) and keeps it only after two submissions with different bodies received
    byte-identical responses, which shows the page does not repeat what the visitor sent. To tell submissions apart it
    keeps a SHA-256 hash of each request body, never the body. The answer must meet the same rules as above, with a
@@ -325,7 +325,7 @@ Netlify Blobs and Redis clients by their methods, so the package has no code for
 
 ## 7. Security model
 
-**Kerckhoffs's principle.** Kagami's design and source are public. The deployment secret is the only secret. The
+**Kerckhoffs's principle.** Lurensic's design and source are public. The deployment secret is the only secret. The
 session key, honeytoken MACs, seals, decoy route and parameter names, comment phrasing and placement, and fake data
 are all derived from it. An attacker who reads this repository knows *that* these tripwires exist, but not *which*
 ones a deployment uses. That knowledge works against the attacker. Avoiding every possible tripwire means not using
@@ -333,16 +333,16 @@ found credentials, not changing IDs and not setting unknown fields, which is mos
 
 **Asymmetry.** The defender needs one trip. The attacker needs zero mistakes across hundreds of requests.
 
-The full threat model, including what Kagami does *not* defend against, is in [THREAT_MODEL.md](THREAT_MODEL.md).
+The full threat model, including what Lurensic does *not* defend against, is in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## 8. Audit log
 
 Events are built and serialised inside the core and handed to the host as opaque JSON lines.
 Hosts write them verbatim.
 
-- **Schema.** Events use the schema `kagami.event/v1`. The fields always appear in this order. `schema, id, seq, ts, deployment, instance, mode, kind, rule, title, severity, confidence, session?, source?, request?, subject?, evidence, mitre_attack, untrusted, prev_hash, hash`. `request` holds `method, host, path, query` and, for browsers, `site?` (from `Sec-Fetch-Site`, or `cross-site` when the `Origin` is another site) and `navigate?` (from `Sec-Fetch-Mode`).
+- **Schema.** Events use the schema `lurensic.event/v1`. The fields always appear in this order. `schema, id, seq, ts, deployment, instance, mode, kind, rule, title, severity, confidence, session?, source?, request?, subject?, evidence, mitre_attack, untrusted, prev_hash, hash`. `request` holds `method, host, path, query` and, for browsers, `site?` (from `Sec-Fetch-Site`, or `cross-site` when the `Origin` is another site) and `navigate?` (from `Sec-Fetch-Mode`).
 - **Subject.** When the host passes `subject`, the app's own id for the sender such as an account id, every event from that request carries it. It is sanitised, capped at 128 characters and listed in `untrusted`, because an app may read it from a token the client sent. Apps must never pass a cookie, token or session secret as the subject, because events are logged. It is a label only. Sessions and machines are never keyed on it.
-- **Hash chain.** Each event's `hash` is `SHA-256(prev_hash ‖ "\n" ‖ body)`, where `body` is the line without its final `hash` field. Each instance starts from the all-zero genesis hash at `seq 0`. `kagami verify-log` checks one or more interleaved instance chains.
+- **Hash chain.** Each event's `hash` is `SHA-256(prev_hash ‖ "\n" ‖ body)`, where `body` is the line without its final `hash` field. Each instance starts from the all-zero genesis hash at `seq 0`. `lurensic verify-log` checks one or more interleaved instance chains.
 - **Sanitisation.** C0 and C1 control characters and bidi overrides are replaced, fields are truncated, query values with sensitive names (`password`, `token`, `key`, `session` and similar) are redacted, cookie values are never logged, and honeytokens are masked (for example `aB3c…xYz9`).
 - **Untrusted marking.** The `untrusted` field lists the fields that hold attacker-controlled text. Anything that reads these events, such as SIEM rules, chat-ops or AI triage assistants, must treat them as data. Attackers can and will put prompt injection into user agents and paths.
 - **Rate limiting.** Each instance emits at most 600 events per minute by default, with a separate budget for critical events so that a flood of other events cannot hide them. Suppressed counts are reported in `system.events_suppressed`. Each rule produces at most one event per session, and repeats only add to the score.
@@ -353,7 +353,7 @@ Hosts write them verbatim.
 |---|---|---|
 | `consoleSink` | low | JSON lines to stdout (the default sink) |
 | `fileSink` | info | Append only, created with mode 0600 |
-| `webhookSink` | medium | HTTPS only (plain http is allowed only for localhost), signed with a `kagami-signature` header carrying a timestamp and an HMAC of the body, redirects never followed, 5 second timeout, 1 retry |
+| `webhookSink` | medium | HTTPS only (plain http is allowed only for localhost), signed with a `lurensic-signature` header carrying a timestamp and an HMAC of the body, redirects never followed, 5 second timeout, 1 retry |
 | `slackSink` | high | Escaped summary only, link unfurling disabled, no attacker text that could create mentions or links |
 | `detectSink` | low | Behind the `onDetect` option. Skips `system` events, and one failing call never drops the rest of a batch |
 | `callbackSink`, `memorySink` | info | In-process integrations and tests |
@@ -364,10 +364,10 @@ Delivery is asynchronous and bounded to a queue of 10 000 events. Overflow is co
 
 | Guarantee | Test |
 |---|---|
-| Observe mode never changes a response, byte for byte | `observe mode: every response is byte-identical to the app without Kagami` in `packages/express/test` |
-| The core never returns an action in observe mode | `observe_mode_never_changes_anything` in `crates/kagami-core/tests/engine.rs` |
+| Observe mode never changes a response, byte for byte | `observe mode: every response is byte-identical to the app without Lurensic` in `packages/express/test` |
+| The core never returns an action in observe mode | `observe_mode_never_changes_anything` in `crates/lurensic-core/tests/engine.rs` |
 | Internal faults never reach the app | `fails open if the engine misbehaves` and `internal faults never escape to the caller` |
-| Misconfiguration disables Kagami instead of crashing | `fails open: bad configuration disables Kagami instead of throwing` and `production without a secret: disabled with a clear warning` |
+| Misconfiguration disables Lurensic instead of crashing | `fails open: bad configuration disables Lurensic instead of throwing` and `production without a secret: disabled with a clear warning` |
 | Ordinary traffic stays silent | `ordinary_browsing_is_silent` and the demo's honest customer persona |
 | Logs are tamper evident | `event_log_is_hash_chained_and_tamper_evident` and the `verifyChain` tests |
 | Logs never contain secrets or control characters | `logs_are_safe_against_hostile_input` and the demo's audit log test |
@@ -394,23 +394,23 @@ The next planned optimisations are a binary envelope and Aho-Corasick matching f
 | `onDetect` | none | `(event) => void | Promise<void>`, called off the request path with each detection and session event. Added next to `sinks`, never in place of them. The main way an app acts on a detection |
 | `detectSeverity` | `low` | The lowest severity passed to `onDetect` |
 | `subject` (each adapter) | none | A function that returns the app's id for the sender, copied into every event as `subject`. Express passes `req` and calls it again when the response finishes. The fetch and Hono adapters pass the raw `Request` and the platform |
-| `secret` | `KAGAMI_SECRET` | At least 32 characters. Without it in production Kagami disables itself and warns. In development a temporary secret is used. |
-| `mode` | `KAGAMI_MODE` or `observe` | `observe` or `protect` |
-| `enabled` | `true` | `KAGAMI_DISABLED=1` also disables Kagami |
+| `secret` | `LURENSIC_SECRET` | At least 32 characters. Without it in production Lurensic disables itself and warns. In development a temporary secret is used. |
+| `mode` | `LURENSIC_MODE` or `observe` | `observe` or `protect` |
+| `enabled` | `true` | `LURENSIC_DISABLED=1` also disables Lurensic |
 | `decoys.html`, `decoys.json`, `decoys.forms`, `decoys.baitFiles`, `decoys.routes` | `true`, `false`, `false`, `true`, `true` | Protect mode features |
-| `site` | `KAGAMI_SITE`, else the first real host name seen | The site's public host name, which decoys name in fake files and records. Pinned so decoys never change with the Host header. Set it when several copies of the app run |
-| `decoys.spec` | `false` | The decoy API description. `KAGAMI_DECOYS` (`json`, `forms`, `spec` or `all`) turns the opt-in decoys on from the environment, and settings in code take precedence |
+| `site` | `LURENSIC_SITE`, else the first real host name seen | The site's public host name, which decoys name in fake files and records. Pinned so decoys never change with the Host header. Set it when several copies of the app run |
+| `decoys.spec` | `false` | The decoy API description. `LURENSIC_DECOYS` (`json`, `forms`, `spec` or `all`) turns the opt-in decoys on from the environment, and settings in code take precedence |
 | `decoys.reservedPaths`, `decoys.reservedNames` | `[]` | Real paths and names that decoys must avoid |
 | `tarpit` | `false` | `true` or `{ minMs, maxMs }` |
 | `thresholds` | `{ suspicious: 30, flagged: 70 }` | |
 | `ignorePaths` | `[]` | Paths skipped entirely, such as health checks and static assets |
-| `clientAddress` | `KAGAMI_PROXY`, else `render` when `RENDER=true`, else none | A preset (`cloudflare`, `render` or `none`) or `{ trustedProxies, cloudflare, cloudflareRanges }`. The core resolves the client address from the peer and trusted headers. See [Behind a proxy or CDN](guides/behind-a-proxy.md). |
+| `clientAddress` | `LURENSIC_PROXY`, else `render` when `RENDER=true`, else none | A preset (`cloudflare`, `render` or `none`) or `{ trustedProxies, cloudflare, cloudflareRanges }`. The core resolves the client address from the peer and trusted headers. See [Behind a proxy or CDN](guides/behind-a-proxy.md). |
 | `ipLogging` | `raw` | `raw`, `hashed` (keyed per deployment) or `omit` |
 | `sinks` | `[consoleSink()]` | |
-| `containment` | `KAGAMI_CONTAINMENT` or off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
-| `enforcers` | `[]` | Where contained machines are enforced besides Kagami, such as `blocklistFile` or `webhookEnforcer`. See [Blocking at your firewall or CDN](guides/firewall.md) |
-| `store` | none | A key-value store shared by every instance, such as Workers KV, Deno KV, Netlify Blobs or a Redis client. On Workers a binding named `KAGAMI_STORE` is used by itself, and a function receives the bindings. See [the store](guides/choose-your-setup.md#the-store) |
-| `env` | `process.env` | Where the `KAGAMI_*` settings are read from. The fetch and Hono adapters pass Workers bindings here |
+| `containment` | `LURENSIC_CONTAINMENT` or off | `true`, or `{ trigger, action, ttlSeconds, allow, maxEntries, shadowCacheBytes }` with defaults `tripwire`, `shadow`, 86400, `[]`, 10000, 4 MiB |
+| `enforcers` | `[]` | Where contained machines are enforced besides Lurensic, such as `blocklistFile` or `webhookEnforcer`. See [Blocking at your firewall or CDN](guides/firewall.md) |
+| `store` | none | A key-value store shared by every instance, such as Workers KV, Deno KV, Netlify Blobs or a Redis client. On Workers a binding named `LURENSIC_STORE` is used by itself, and a function receives the bindings. See [the store](guides/choose-your-setup.md#the-store) |
+| `env` | `process.env` | Where the `LURENSIC_*` settings are read from. The fetch and Hono adapters pass Workers bindings here |
 | `clientIp` (fetch and Hono) | from the runtime | A function that returns the client address, for hosts whose runtime does not report it |
 | `maxBodyBytes` | 16384 | |
 | `maxEventsPerMinute` | 600 | |

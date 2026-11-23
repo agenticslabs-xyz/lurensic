@@ -5,20 +5,20 @@
 //   pnpm bench -- --planted --mode off --port 41841 --label "artex-baseline-1"
 //
 // Options
-//   --mode      protect (default), observe, or off (Kagami disabled, the baseline)
+//   --mode      protect (default), observe, or off (Lurensic disabled, the baseline)
 //   --contain   off (default), shadow or block
 //   --planted   add the two planted real bugs (see examples/demo-shop/app.js)
 //   --respond   the demo acts on tripwires through onDetect, blocking the
 //               address and locking the account, as a developer would
 //   --warmup    on (default) or off. An honest visitor browses the site before
 //               the attack, as on a live site, so the shadow has pages to learn
-//   --decoys    extra opt-in decoys as KAGAMI_DECOYS, default spec (the demo
+//   --decoys    extra opt-in decoys as LURENSIC_DECOYS, default spec (the demo
 //               shop publishes no API description). Use none to turn it off
 //   --port      use a new port for every round, because some harnesses keep
 //               their memory per target URL
 //
 // Each round gets its own folder bench-runs/<timestamp>[-label]/ with a fresh
-// deployment secret (new decoys), the Kagami event log, the full request log
+// deployment secret (new decoys), the Lurensic event log, the full request log
 // and run.json describing the round. Stop with Ctrl+C.
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -67,7 +67,7 @@ const version = JSON.parse(readFileSync(join(root, 'packages', 'node', 'package.
 const run = {
   started_at: new Date().toISOString(),
   label: values.label || null,
-  kagami_version: version,
+  lurensic_version: version,
   mode: values.mode,
   containment: values.mode === 'off' ? 'off' : values.contain,
   planted_bugs: values.planted,
@@ -75,7 +75,7 @@ const run = {
   extra_decoys: values.decoys === 'none' ? '' : values.decoys,
   port: Number(values.port),
   target_from_docker: `http://host.docker.internal:${values.port}`,
-  files: { events: 'kagami-events.jsonl', access: 'access.jsonl', secret: '.kagami-secret' },
+  files: { events: 'lurensic-events.jsonl', access: 'access.jsonl', secret: '.lurensic-secret' },
 };
 writeFileSync(join(runDir, 'run.json'), JSON.stringify(run, null, 2) + '\n');
 
@@ -88,16 +88,16 @@ const env = {
   ...process.env,
   NODE_ENV: 'production',
   PORT: values.port,
-  KAGAMI_MODE: values.mode === 'off' ? 'protect' : values.mode,
-  KAGAMI_DATA_DIR: runDir,
-  KAGAMI_CONTAINMENT: values.contain === 'off' ? '' : values.contain,
+  LURENSIC_MODE: values.mode === 'off' ? 'protect' : values.mode,
+  LURENSIC_DATA_DIR: runDir,
+  LURENSIC_CONTAINMENT: values.contain === 'off' ? '' : values.contain,
   PLANTED_BUGS: values.planted ? '1' : '',
   DEMO_RESPOND: values.respond ? '1' : '',
-  KAGAMI_DECOYS: values.decoys === 'none' ? '' : values.decoys,
+  LURENSIC_DECOYS: values.decoys === 'none' ? '' : values.decoys,
 };
-delete env.KAGAMI_SECRET; // a fresh secret per round, stored in the run folder
-if (values.mode === 'off') env.KAGAMI_DISABLED = '1';
-else delete env.KAGAMI_DISABLED;
+delete env.LURENSIC_SECRET; // a fresh secret per round, stored in the run folder
+if (values.mode === 'off') env.LURENSIC_DISABLED = '1';
+else delete env.LURENSIC_DISABLED;
 const child = spawn(process.execPath, [join(root, 'examples', 'demo-shop', 'server.js')], { env, stdio: 'inherit' });
 
 const stop = (sig) => child.kill(sig);

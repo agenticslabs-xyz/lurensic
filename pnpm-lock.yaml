@@ -23,7 +23,7 @@ importers:
 
   examples/demo-shop:
     dependencies:
-      '@agenticslabs/kagami-express':
+      '@agenticslabs/lurensic-express':
         specifier: workspace:*
         version: link:../../packages/express
       express:
@@ -32,7 +32,7 @@ importers:
 
   examples/hono-app:
     dependencies:
-      '@agenticslabs/kagami-hono':
+      '@agenticslabs/lurensic-hono':
         specifier: workspace:*
         version: link:../../packages/hono
       '@hono/node-server':
@@ -48,7 +48,7 @@ importers:
 
   packages/express:
     dependencies:
-      '@agenticslabs/kagami':
+      '@agenticslabs/lurensic':
         specifier: workspace:*
         version: link:../node
       express:
@@ -57,7 +57,7 @@ importers:
 
   packages/hono:
     dependencies:
-      '@agenticslabs/kagami':
+      '@agenticslabs/lurensic':
         specifier: workspace:*
         version: link:../node
     devDependencies:

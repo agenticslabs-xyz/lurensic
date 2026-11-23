@@ -3,7 +3,7 @@
  * store, so containment survives restarts and holds across every instance of
  * an app, such as many copies of a Cloudflare Worker or a serverless function.
  *
- * Kagami has no code for any particular platform. It takes the store object
+ * Lurensic has no code for any particular platform. It takes the store object
  * the platform already provides and recognises it by its methods.
  *
  * - Cloudflare Workers KV, or any object with get, put and delete
@@ -16,7 +16,7 @@
 
 import type { Enforcer } from './types.js';
 
-/** A store as Kagami uses it. */
+/** A store as Lurensic uses it. */
 export interface StoreDriver {
   readonly kind: string;
   get(key: string): Promise<unknown>;
@@ -36,12 +36,12 @@ export function storeDriver(store: unknown): StoreDriver {
   if (has(store, 'atomic') && has(store, 'get') && has(store, 'set')) {
     return {
       kind: 'Deno KV',
-      get: async (key) => ((await call(store, 'get', ['kagami', key])) as { value?: unknown } | null)?.value ?? null,
-      put: async (key, value, ttl) => void (await call(store, 'set', ['kagami', key], value, { expireIn: ttl * 1000 })),
-      delete: async (key) => void (await call(store, 'delete', ['kagami', key])),
+      get: async (key) => ((await call(store, 'get', ['lurensic', key])) as { value?: unknown } | null)?.value ?? null,
+      put: async (key, value, ttl) => void (await call(store, 'set', ['lurensic', key], value, { expireIn: ttl * 1000 })),
+      delete: async (key) => void (await call(store, 'delete', ['lurensic', key])),
     };
   }
-  // Cloudflare Workers KV, and the shape Kagami documents for any other store.
+  // Cloudflare Workers KV, and the shape Lurensic documents for any other store.
   if (has(store, 'put') && has(store, 'get') && has(store, 'delete')) {
     return {
       kind: 'key-value store',
@@ -78,7 +78,7 @@ export function storeDriver(store: unknown): StoreDriver {
 export const STORE_HELP =
   'The store option takes a key-value store such as Cloudflare Workers KV, Deno KV, Netlify Blobs or a Redis client, or an object with get(key), put(key, value, { expirationTtl }) and delete(key).';
 
-/** What Kagami keeps per contained machine. The key is the machine's keyed hash, not its address. */
+/** What Lurensic keeps per contained machine. The key is the machine's keyed hash, not its address. */
 export interface StoredMachine {
   source: string;
   target: string;
@@ -87,7 +87,7 @@ export interface StoredMachine {
   until_ms: number;
 }
 
-export const storeKey = (source: string): string => `kagami:contained:${source}`;
+export const storeKey = (source: string): string => `lurensic:contained:${source}`;
 
 /** Reads a stored value, which may come back as a string or, from Upstash, already parsed. */
 export function parseStored(raw: unknown): StoredMachine | undefined {

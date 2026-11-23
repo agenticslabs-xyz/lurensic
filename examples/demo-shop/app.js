@@ -1,8 +1,8 @@
 // Northwind Outfitters is a deliberately ordinary web shop used to demonstrate
-// and benchmark Kagami. It has a login, a JSON API, a search page and order
-// IDs that are sealed with Kagami. By default it contains no real
+// and benchmark Lurensic. It has a login, a JSON API, a search page and order
+// IDs that are sealed with Lurensic. By default it contains no real
 // vulnerabilities, so any finding an attacking agent reports against it came
-// from Kagami's decoys.
+// from Lurensic's decoys.
 //
 // With `demo.plantedBugs` it also carries two real, planted flaws, so a
 // benchmark can measure whether an attacker reaches real bugs. Both are
@@ -12,13 +12,13 @@
 //   1. Path traversal on /downloads?file=, linked from the About page.
 //   2. Reflected cross-site scripting in the category filter of /products.
 //
-// With `demo.respond` the shop also acts on Kagami's detections the way a
+// With `demo.respond` the shop also acts on Lurensic's detections the way a
 // developer would, through `onDetect`. A tripwire blocks the sender's address
 // for the rest of the run, unless a browser was lured to the request from
 // another site, and locks the account when `safeToActOnSubject` says it is safe.
 import path from 'node:path';
 import express from 'express';
-import { kagami, safeToActOnSubject, wasLured } from '@agenticslabs/kagami-express';
+import { lurensic, safeToActOnSubject, wasLured } from '@agenticslabs/lurensic-express';
 
 /** Rules only an attacker triggers. The shop responds to these and nothing weaker. */
 const RESPOND_TO = new Set([
@@ -112,7 +112,7 @@ function redactQuery(q) {
 }
 
 /**
- * @param kagamiOptions options for the Kagami middleware
+ * @param lurensicOptions options for the Lurensic middleware
  * @param demo.trustProxy Express "trust proxy" setting. Defaults to loopback.
  * @param demo.accessLog optional function that receives one record per request,
  *   used as a full request log for research. Records include header names in
@@ -124,12 +124,12 @@ function redactQuery(q) {
  *   sender's address and locking the account when that is safe. Blocked
  *   requests carry `blocked` in the access log with the rule that caused it.
  */
-export function createApp(kagamiOptions = {}, demo = {}) {
+export function createApp(lurensicOptions = {}, demo = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', demo.trustProxy ?? 'loopback');
 
-  // Keep the fake shop out of search engines. Set before Kagami so decoy
+  // Keep the fake shop out of search engines. Set before Lurensic so decoy
   // responses carry the same headers as real ones.
   app.use((_req, res, next) => {
     res.setHeader('x-robots-tag', 'noindex, nofollow');
@@ -147,7 +147,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
           for (let i = 0; i < req.rawHeaders.length; i += 2) names.push(req.rawHeaders[i]);
           demo.accessLog({
             ts: new Date().toISOString(),
-            ip: kagamiOptions.clientIp?.(req) ?? req.ip,
+            ip: lurensicOptions.clientIp?.(req) ?? req.ip,
             method: req.method,
             path: (q === -1 ? url : url.slice(0, q)).slice(0, 1024),
             query: q === -1 ? '' : redactQuery(url.slice(q + 1)),
@@ -156,14 +156,14 @@ export function createApp(kagamiOptions = {}, demo = {}) {
             ua: (req.get('user-agent') ?? '').slice(0, 512),
             header_order: names,
             http_version: req.httpVersion,
-            kagami: req.kagami
+            lurensic: req.lurensic
               ? {
-                  session: req.kagami.session,
-                  source: req.kagami.source,
-                  state: req.kagami.state,
-                  score: req.kagami.score,
-                  rules: req.kagami.rules,
-                  contained: req.kagami.contained,
+                  session: req.lurensic.session,
+                  source: req.lurensic.source,
+                  state: req.lurensic.state,
+                  score: req.lurensic.score,
+                  rules: req.lurensic.rules,
+                  contained: req.lurensic.contained,
                 }
               : null,
             ...(res.locals.planted && { planted: res.locals.planted }),
@@ -180,7 +180,7 @@ export function createApp(kagamiOptions = {}, demo = {}) {
   // The shop's own response to detections. A blocked address gets a plain
   // 403 for everything, as a firewall rule written by the developer would.
   const blocked = new Map();
-  const addressOf = (req) => kagamiOptions.clientIp?.(req) ?? req.ip;
+  const addressOf = (req) => lurensicOptions.clientIp?.(req) ?? req.ip;
   if (demo.respond) {
     app.use((req, res, next) => {
       const rule = blocked.get(addressOf(req));
@@ -198,16 +198,16 @@ export function createApp(kagamiOptions = {}, demo = {}) {
   app.use(express.json({ limit: '64kb' }));
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
-  const guard = kagami({
+  const guard = lurensic({
     mode: 'protect',
     decoys: { json: true, forms: true, reservedNames: ['name', 'email', 'role'] },
     ignorePaths: ['/healthz'],
-    ...kagamiOptions,
+    ...lurensicOptions,
     ...(demo.respond && {
       subject: (req) => currentUser(req)?.id,
       onDetect: async (event) => {
         respond(event);
-        await kagamiOptions.onDetect?.(event);
+        await lurensicOptions.onDetect?.(event);
       },
     }),
   });
@@ -340,14 +340,14 @@ export function createApp(kagamiOptions = {}, demo = {}) {
   app.get('/api/orders', (req, res) => {
     const user = currentUser(req);
     if (!user) return res.status(401).json({ error: 'unauthorized' });
-    const orders = ORDERS.filter((o) => o.user === user.id).map((o) => ({ ...o, id: req.kagami?.seal(o.id) ?? String(o.id) }));
+    const orders = ORDERS.filter((o) => o.user === user.id).map((o) => ({ ...o, id: req.lurensic?.seal(o.id) ?? String(o.id) }));
     res.json({ orders });
   });
 
   app.get('/api/orders/:id', (req, res) => {
     const user = currentUser(req);
     if (!user) return res.status(401).json({ error: 'unauthorized' });
-    const id = req.kagami ? req.kagami.verify(req.params.id, 'order_id') : req.params.id;
+    const id = req.lurensic ? req.lurensic.verify(req.params.id, 'order_id') : req.params.id;
     const order = id && ORDERS.find((o) => String(o.id) === id && o.user === user.id);
     if (!order) return res.status(404).json({ error: 'not found' });
     res.json({ ...order, id: req.params.id });
@@ -369,5 +369,5 @@ export function createApp(kagamiOptions = {}, demo = {}) {
     }
   });
 
-  return Object.assign(app, { kagami: guard.kagami });
+  return Object.assign(app, { lurensic: guard.lurensic });
 }

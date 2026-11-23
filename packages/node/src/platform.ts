@@ -4,7 +4,7 @@
  * Nothing here imports a Node module.
  */
 
-/** Settings Kagami reads, such as KAGAMI_SECRET. */
+/** Settings Lurensic reads, such as LURENSIC_SECRET. */
 export type Env = Record<string, string | undefined>;
 
 declare const process: { env?: Env; stdout?: { write(s: string): unknown } } | undefined;
