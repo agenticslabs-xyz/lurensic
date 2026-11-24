@@ -17,3 +17,4 @@ packages/node/src/engine-bytes.ts
 packages/node/src/build-info.ts
 .wrangler/
 .dev.vars
+.pack/
