@@ -25,7 +25,10 @@
     "test": "pnpm test:core && pnpm build && pnpm test:js",
     "demo": "pnpm build && pnpm --filter demo-shop start",
     "bench": "pnpm build && node scripts/bench-serve.mjs",
-    "bench:report": "node scripts/bench-report.mjs"
+    "bench:report": "node scripts/bench-report.mjs",
+    "compat": "node scripts/compat.mjs",
+    "smoke:workers": "node scripts/workers-smoke.mjs",
+    "release:version": "node scripts/release.mjs version"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

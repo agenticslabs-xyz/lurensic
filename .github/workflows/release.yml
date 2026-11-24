@@ -1,0 +1,46 @@
+name: release
+
+# Publishes the three packages to npm when a version tag such as v0.2.0 is
+# pushed. Set the version first with `pnpm release:version 0.2.0`, commit, then
+# tag and push the tag. CONTRIBUTING.md has the full steps.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  # Lets npm verify this workflow (trusted publishing) and sign provenance.
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/release.mjs check "$GITHUB_REF_NAME"
+      - run: pnpm test
+      - run: node scripts/compat.mjs --only express5,express4,hono,cli,require,types,bundle
+      # pnpm publishes the core before the adapters and replaces workspace:^
+      # with the real version. Provenance is only possible from a public
+      # repository, so it switches on by itself once the repository is public.
+      # NPM_TOKEN is only needed until trusted publishing is set up on npm.
+      - run: pnpm -r publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private == false }}
