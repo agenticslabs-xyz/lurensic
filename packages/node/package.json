@@ -29,7 +29,9 @@
   },
   "files": [
     "dist",
-    "wasm"
+    "wasm",
+    "src",
+    "!src/engine-bytes.ts"
   ],
   "sideEffects": [
     "./dist/index.js",
@@ -56,7 +58,6 @@
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }

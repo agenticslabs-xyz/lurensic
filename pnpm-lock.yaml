@@ -49,7 +49,7 @@ importers:
   packages/express:
     dependencies:
       '@agenticslabs/lurensic':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../node
       express:
         specifier: '>=4.18'
@@ -58,7 +58,7 @@ importers:
   packages/hono:
     dependencies:
       '@agenticslabs/lurensic':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../node
     devDependencies:
       hono:

@@ -24,7 +24,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "sideEffects": false,
   "keywords": [
@@ -42,14 +43,13 @@
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "dependencies": {
-    "@agenticslabs/lurensic": "workspace:*"
+    "@agenticslabs/lurensic": "workspace:^"
   },
   "peerDependencies": {
     "hono": ">=4"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "devDependencies": {
     "hono": "^4.13.18"
