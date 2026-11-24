@@ -101,9 +101,7 @@ try {
   }
 
   if (wanted('bundle')) {
-    const esbuild = join(app, 'node_modules', 'esbuild', 'bin', 'esbuild');
-    const b = run(process.execPath, [esbuild, 'express.mjs', '--bundle', '--platform=node', '--format=esm', '--outfile=bundle/app.mjs', '--log-level=error',
-      "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"], { cwd: app });
+    const b = node('bundle.mjs');
     if (b.status !== 0) record('bundle', 'FAIL', b.stderr.trim());
     else report('bundle', node(join('bundle', 'app.mjs'), { env: { ...env, EXPRESS: 'express' } }));
   }
