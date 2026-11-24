@@ -47,6 +47,8 @@ jobs:
         with:
           name: packages
           path: .pack/*.tgz
+          include-hidden-files: true
+          if-no-files-found: error
 
   # Installs the packed packages into a new project, the way users get them,
   # on every Node version the packages support, and on Bun and Deno.
