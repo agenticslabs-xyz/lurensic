@@ -2,8 +2,10 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { verifyChain } from './chain.js';
-import { formatChecks, runDoctor } from './doctor.js';
+// Import through the package entry, which loads the engine. Importing doctor.js
+// directly gives a Lurensic with no engine, and the doctor then reports a broken
+// install on every machine.
+import { formatChecks, runDoctor, verifyChain } from './index.js';
 
 const HELP = `Lurensic command line tool. Deception-based defence against AI-driven attacks.
 
