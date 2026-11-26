@@ -11,9 +11,14 @@
 
 An open-source project by [Agentics Labs](https://agenticslabs.xyz).
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-alpha-orange.svg)
-![Core](https://img.shields.io/badge/core-Rust%20and%20WebAssembly-informational.svg)
+[![npm](https://img.shields.io/npm/v/@agenticslabs/lurensic?color=e5482b&label=npm)](https://www.npmjs.com/package/@agenticslabs/lurensic)
+[![CI](https://github.com/agenticslabs-xyz/lurensic/actions/workflows/ci.yml/badge.svg)](https://github.com/agenticslabs-xyz/lurensic/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-0b0b0b.svg)](LICENSE)
+![Core](https://img.shields.io/badge/core-Rust%20and%20WebAssembly-0b0b0b.svg)
+
+<br>
+
+<a href="https://lurensic.com"><img src=".github/assets/readme/live-feed.gif" alt="Requests passing through the Lurensic engine, with attacks flagged as they arrive" width="652"></a>
 
 </div>
 
@@ -30,19 +35,13 @@ Lurensic never asks the agent for anything. It is an engine inside your app that
 3. **Hands each detection to your code** through one callback. You decide what happens next, such as locking the
    account, blocking the address or alerting someone.
 
+In our benchmarks, an AI pentest agent attacked a test app with two planted vulnerabilities for close to an hour. The
+agent reached neither of them, and four of the five findings in its report came from decoys. The full results are
+[below](#benchmarks).
+
 ## How it works
 
-```mermaid
-flowchart LR
-    V["Visitor or AI agent"] --> K{"Lurensic<br/>inside your app"}
-    K -->|"ordinary request"| APP["Your application"]
-    K -->|"probes for secrets<br/>or hidden routes"| D["Decoys<br/>fake .env, decoy API,<br/>planted credentials"]
-    D -.->|"agent uses what it found"| T(["Tripwire"])
-    K -->|"edits a decoy field<br/>or a sealed ID"| T
-    T --> E["Event<br/>rule, session, address,<br/>your account id"]
-    E --> CB["onDetect(event)<br/>in your code"]
-    CB --> R["Your response<br/>lock, block, alert"]
-```
+<a href="https://lurensic.com/#how"><img src=".github/assets/readme/how-it-works.png" alt="How Lurensic handles each request. Visitors and AI attack agents pass through the Lurensic engine, which sends traffic on to your app or to decoys and hands each detection to your code." width="100%"></a>
 
 1. **Detect.** Lurensic inspects every request. Using a planted credential, editing a decoy field, calling a decoy
    route or forging a sealed ID trips a wire. Payloads, scanners and enumeration add up to a session score.
@@ -52,15 +51,14 @@ flowchart LR
 3. **Hand over.** Each detection becomes one structured event. Lurensic calls your `onDetect` function with it,
    including your own id for the account that sent the request, so your code knows whom to act on.
 
-In every live benchmark round so far, the attacker's machine was identified within its first 35 requests, and over
-99 % of its traffic came after that point.
-
 | Mode | Lurensic detects and calls `onDetect` | Lurensic misleads |
 |---|---|---|
 | `observe` (default) | yes | no, responses stay byte-identical |
 | `protect` | yes | yes |
 
 ## Why instructions don't get around it
+
+<a href="https://lurensic.com/#tripwires"><img src=".github/assets/readme/tripwires.png" alt="Eight tripwires on steps every attack takes, covering secret file probes, leaked keys, API descriptions, session forgery, mass assignment, ID tampering, unsigned tokens, and payloads and scanning." width="100%"></a>
 
 | An attacking agent will... | Lurensic's tripwire | Why instructions don't help |
 |---|---|---|
@@ -233,6 +231,8 @@ for each framework and ends with `lurensic doctor --json`, so the agent can chec
 - **No data leaves your servers** unless your `onDetect` code or a sink sends it.
 
 ## Benchmarks
+
+<a href="https://lurensic.com/#results"><img src=".github/assets/readme/benchmarks.png" alt="Benchmark results against an autonomous AI attacker. The agent reached 0 of 2 planted vulnerabilities, sent 56,662 requests aimed at them with none reaching them, and 4 of the 5 findings in its report came from decoys." width="100%"></a>
 
 Lurensic is developed against **real AI pentest agents** as well as scripted personas. The scripted suites in
 [`examples/demo-shop/test`](examples/demo-shop/test) run in CI.

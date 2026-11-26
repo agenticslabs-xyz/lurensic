@@ -34,14 +34,12 @@ The three packages always share one version and are published together by the re
 2. Commit, merge to `main` and wait for CI to pass.
 3. Tag the commit and push the tag with `git tag v0.2.0 && git push origin v0.2.0`.
 
-The workflow checks that the tag matches every package, runs the tests and the compatibility checks, and publishes
-with pnpm, which puts out the core before the adapters. Never publish with plain `npm publish`, which would ship the
-`workspace:^` ranges as they are.
+The workflow checks that the tag matches every package, runs the tests and the compatibility checks, publishes with
+pnpm, which puts out the core before the adapters, and creates a GitHub release with notes for the tag. Never publish
+with plain `npm publish`, which would ship the `workspace:^` ranges as they are.
 
-Before the first release, add an npm access token with publish rights to the `@agenticslabs` scope as the
-repository secret `NPM_TOKEN`. Once the packages exist on npm, add this repository and `release.yml` as a trusted
-publisher in each package's settings on npmjs.com and delete the secret. Provenance switches on by itself when the
-repository is public.
+npm trusts `release.yml` in this repository as the publisher of all three packages, so the workflow needs no
+npm token, and every release carries provenance. Only repository admins can push `v*` tags.
 
 ## Adding a detection rule
 
