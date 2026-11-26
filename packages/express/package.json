@@ -1,6 +1,6 @@
 {
   "name": "@agenticslabs/lurensic-express",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lurensic middleware for Express. It detects AI agents and automated attackers with tripwires that instructions to the agent cannot get around.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
