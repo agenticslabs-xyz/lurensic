@@ -1,6 +1,6 @@
 # @agenticslabs/lurensic-hono
 
-Hono middleware for [Lurensic](https://github.com/agenticslabs-xyz/lurensic), a deception-based defence against AI-driven
+Hono middleware for [Lurensic](https://lurensic.com), a deception-based defence against AI-driven
 attacks. It detects attacking agents with tripwires that instructions to the agent can't get around, misleads them
 with decoys, and hands each detection to your code. It runs wherever Hono runs, on Node, Bun, Deno, Cloudflare
 Workers and serverless hosts.
@@ -39,8 +39,8 @@ For TypeScript, add `LurensicVariables` to the app's type, `new Hono<{ Variables
   AWS Lambda. On Vercel and Netlify, pass `clientIp`.
 - **Cloudflare Workers.** Settings come from the Worker's bindings.
 
-[Choose your setup](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/choose-your-setup.md) has the full
+[Choose your setup](https://lurensic.com/docs/#/setup) has the full
 steps for each host and what each path supports. Lurensic can also cut attacking machines off by itself, which is
-optional and off by default. See [Containment](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/containment.md).
+optional and off by default. See [Containment](https://lurensic.com/docs/#/containment).
 
 Apache-2.0. Copyright [Agentics Labs](https://agenticslabs.xyz).

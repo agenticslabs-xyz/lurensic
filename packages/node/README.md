@@ -1,12 +1,12 @@
 # @agenticslabs/lurensic
 
-The runtime for [Lurensic](https://github.com/agenticslabs-xyz/lurensic), a deception-based defence against AI-driven
+The runtime for [Lurensic](https://lurensic.com), a deception-based defence against AI-driven
 attacks. It runs on Node, Bun, Deno and Cloudflare Workers, and includes the WebAssembly engine, the `onDetect`
 callback, event sinks and the CLI.
 
 With Express, install [`@agenticslabs/lurensic-express`](https://www.npmjs.com/package/@agenticslabs/lurensic-express).
 With Hono, install [`@agenticslabs/lurensic-hono`](https://www.npmjs.com/package/@agenticslabs/lurensic-hono). Both bring
-this package with them. [Choose your setup](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/choose-your-setup.md) shows the path for every framework and host.
+this package with them. [Choose your setup](https://lurensic.com/docs/#/setup) shows the path for every framework and host.
 
 ## Any app with a fetch handler
 
@@ -70,7 +70,7 @@ so contained machines can be served copies of public pages.
 Enforcers receive each newly contained machine, off the request path. The package includes
 `blocklistFile` (plain, nginx or JSON, written atomically, kept across restarts), `webhookEnforcer`
 (HMAC-signed) and `callbackEnforcer`. Recipes for nginx, host firewalls, Cloudflare and cloud WAFs are in
-[Blocking at your firewall or CDN](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/firewall.md). Write your own by implementing the `Enforcer` interface.
+[Blocking at your firewall or CDN](https://lurensic.com/docs/#/containment). Write your own by implementing the `Enforcer` interface.
 `lurensic.contained()` lists contained machines and `lurensic.release(ip)` ends a containment early.
 
 ## The store
@@ -82,10 +82,10 @@ containment through restarts and across every copy of the app.
 lurensic(app, { containment: true, store: redis });   // Workers KV, Deno KV, Netlify Blobs or a Redis client
 ```
 
-On Cloudflare Workers a KV binding named `LURENSIC_STORE` is used without any code. See [the store](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/choose-your-setup.md#the-store).
+On Cloudflare Workers a KV binding named `LURENSIC_STORE` is used without any code. See [the store](https://lurensic.com/docs/#/containment).
 
 `fileSink` and `blocklistFile` need a file system, so they are not available on Cloudflare Workers.
 
-The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/lurensic
+The full documentation is at https://lurensic.com/docs/
 
 Apache-2.0. Copyright [Agentics Labs](https://agenticslabs.xyz).

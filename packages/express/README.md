@@ -1,6 +1,6 @@
 # @agenticslabs/lurensic-express
 
-Express middleware for [Lurensic](https://github.com/agenticslabs-xyz/lurensic), a deception-based defence
+Express middleware for [Lurensic](https://lurensic.com), a deception-based defence
 against AI-driven attacks. It detects attacking agents with tripwires that instructions to the agent can't get around,
 misleads them with decoys, and hands each detection to your code.
 
@@ -33,10 +33,10 @@ JSON lines. `subject` runs again when the response finishes, so ids your routes 
 - **Sealed IDs.** `req.lurensic.seal(id)` and `req.lurensic.verify(sealed)` turn IDOR attempts into alerts.
 - **Decoys.** With `mode: 'protect'`, probes for secrets get fake files whose credentials are honeytokens, and `decoys: { json: true, forms: true }` adds a decoy field that only a mass-assignment attempt changes. `decoys: { spec: true }` serves a decoy API description whose every operation is a decoy. `LURENSIC_DECOYS=json,forms,spec` does the same from the environment.
 
-On Render nothing is needed, because Lurensic detects Render. With Cloudflare in front, set `LURENSIC_PROXY=cloudflare`. Behind your own proxy, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Lurensic then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. See [Choose your setup](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/choose-your-setup.md) for every path.
+On Render nothing is needed, because Lurensic detects Render. With Cloudflare in front, set `LURENSIC_PROXY=cloudflare`. Behind your own proxy, set `clientAddress: { trustedProxies: ['127.0.0.1'], cloudflare: true }`. Lurensic then works out the visitor's address itself and cannot be fooled by a forged `X-Forwarded-For` or `CF-Connecting-IP`. See [Choose your setup](https://lurensic.com/docs/#/setup) for every path.
 
-Lurensic can also cut attacking machines off by itself. That is optional and off by default. See [Containment](https://github.com/agenticslabs-xyz/lurensic/blob/main/docs/guides/containment.md).
+Lurensic can also cut attacking machines off by itself. That is optional and off by default. See [Containment](https://lurensic.com/docs/#/containment).
 
-The full documentation, design and threat model are at https://github.com/agenticslabs-xyz/lurensic
+The full documentation is at https://lurensic.com/docs/
 
 Apache-2.0. Copyright [Agentics Labs](https://agenticslabs.xyz).

@@ -4,7 +4,7 @@
   "description": "Lurensic runtime for Node, Bun, Deno and Cloudflare Workers. The engine, the onDetect callback, event sinks, a web-standard fetch adapter and the CLI, for deception-based detection of AI-driven and automated attacks.",
   "license": "Apache-2.0",
   "author": "Agentics Labs (https://agenticslabs.xyz)",
-  "homepage": "https://github.com/agenticslabs-xyz/lurensic#readme",
+  "homepage": "https://lurensic.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/agenticslabs-xyz/lurensic.git",
