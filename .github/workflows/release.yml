@@ -8,7 +8,8 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
+  # Lets the workflow create the GitHub release for the tag.
+  contents: write
   # Lets npm verify this workflow (trusted publishing) and sign provenance.
   id-token: write
 
@@ -37,10 +38,14 @@ jobs:
       - run: pnpm test
       - run: node scripts/compat.mjs --only express5,express4,hono,cli,require,types,bundle
       # pnpm publishes the core before the adapters and replaces workspace:^
-      # with the real version. Provenance is only possible from a public
-      # repository, so it switches on by itself once the repository is public.
-      # NPM_TOKEN is only needed until trusted publishing is set up on npm.
+      # with the real version. npm authenticates this workflow through trusted
+      # publishing, so no token is stored. Provenance is only possible from a
+      # public repository, so it is tied to the repository's visibility.
       - run: pnpm -r publish --access public --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private == false }}
+      # A GitHub release for the tag, with notes listing the merged pull
+      # requests. A rerun skips it when the release already exists.
+      - run: gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Lurensic ${GITHUB_REF_NAME#v}"
+        env:
+          GH_TOKEN: ${{ github.token }}
