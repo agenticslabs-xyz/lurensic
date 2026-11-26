@@ -38,8 +38,8 @@ The workflow checks that the tag matches every package, runs the tests and the c
 pnpm, which puts out the core before the adapters, and creates a GitHub release with notes for the tag. Never publish
 with plain `npm publish`, which would ship the `workspace:^` ranges as they are.
 
-npm trusts `release.yml` in this repository as the publisher of all three packages, so no npm token is stored
-anywhere, and every release carries provenance. Only repository admins can push `v*` tags.
+npm trusts `release.yml` in this repository as the publisher of all three packages, so the workflow needs no
+npm token, and every release carries provenance. Only repository admins can push `v*` tags.
 
 ## Adding a detection rule
 
