@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   test:
+    name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,6 +54,8 @@ jobs:
   # Installs the packed packages into a new project, the way users get them,
   # on every Node version the packages support, and on Bun and Deno.
   compat:
+    # Short, stable names, because the ruleset on main requires these checks by name.
+    name: compat (node ${{ matrix.node }})
     needs: test
     runs-on: ubuntu-latest
     strategy:
