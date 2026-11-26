@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/lurensic-logo-dark.png">
+  <img src=".github/assets/lurensic-logo-light.png" alt="Lurensic logo" width="88">
+</picture>
+
 # Lurensic
 
 **Deception-based defence against AI-driven attacks.**
