@@ -1,7 +1,7 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/lurensic-logo-dark.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/agenticslabs-xyz/lurensic/raw/main/.github/assets/lurensic-logo-dark.png">
   <img src=".github/assets/lurensic-logo-light.png" alt="Lurensic logo" width="88">
 </picture>
 
